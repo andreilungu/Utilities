@@ -1,0 +1,50 @@
+OBJECT Codeunit 50000 Create Json Sample
+{
+  OBJECT-PROPERTIES
+  {
+    Date=14-03-18;
+    Time=17:33:25;
+    Modified=Yes;
+    Version List=;
+  }
+  PROPERTIES
+  {
+    OnRun=VAR
+            JSonResponse@1100476000 : DotNet "'Newtonsoft.Json, Version=6.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed'.Newtonsoft.Json.Linq.JObject";
+            JsonString@1100476002 : Text;
+            MyFile@1100476001 : File;
+            OutStr@1100476003 : OutStream;
+          BEGIN
+            CreateSimpleJsonFile(JSonResponse);
+
+            MESSAGE('id: %1 ; status: %2', FORMAT(JSonResponse.GetValue('id')), FORMAT(JSonResponse.GetValue('status')));
+
+            JsonString := JSonResponse.ToString();
+
+            MyFile.CREATE('C:\Temp\JsonTest.txt');
+            MyFile.CREATEOUTSTREAM(OutStr);
+            OutStr.WRITETEXT(JsonString);
+          END;
+
+  }
+  CODE
+  {
+
+    LOCAL PROCEDURE CreateSimpleJsonFile@1100476000(VAR JSonResponse@1100476000 : DotNet "'Newtonsoft.Json, Version=6.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed'.Newtonsoft.Json.Linq.JObject");
+    VAR
+      JsonTextWriter@1100476002 : DotNet "'Newtonsoft.Json, Version=6.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed'.Newtonsoft.Json.JsonTextWriter";
+      LibraryRandom@1100476001 : Codeunit 130440;
+    BEGIN
+      JSonResponse := JSonResponse.JObject();
+      JsonTextWriter := JSonResponse.CreateWriter();
+      JsonTextWriter.WritePropertyName('id');
+      JsonTextWriter.WriteValue(LibraryRandom.RandInt(50000));
+      JsonTextWriter.WritePropertyName('status');
+      JsonTextWriter.WriteValue('done');
+    END;
+
+    BEGIN
+    END.
+  }
+}
+
