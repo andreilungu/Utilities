@@ -6,9 +6,7 @@ codeunit 50134 TestJson
         Json.Add('status','done');
         JArray.Add(Json);
         JArray.WriteTo(str);
-        Message(str);
-
-        
+        Message(str);  
     end;
     
     var
