@@ -1,0 +1,147 @@
+OBJECT Table 50000 Test Table
+{
+  OBJECT-PROPERTIES
+  {
+    Date=07-07-18;
+    Time=09:12:28;
+    Modified=Yes;
+    Version List=;
+  }
+  PROPERTIES
+  {
+  }
+  FIELDS
+  {
+    { 1   ;   ;Id                  ;Integer        }
+    { 2   ;   ;Description         ;BLOB          ;SubType=Memo }
+  }
+  KEYS
+  {
+    {    ;Id                                      ;Clustered=Yes }
+  }
+  FIELDGROUPS
+  {
+  }
+  CODE
+  {
+
+    BEGIN
+    END.
+  }
+}
+
+OBJECT Page 50000 Test Page
+{
+  OBJECT-PROPERTIES
+  {
+    Date=07-07-18;
+    Time=09:16:31;
+    Modified=Yes;
+    Version List=;
+  }
+  PROPERTIES
+  {
+    SourceTable=Table50000;
+    PageType=List;
+  }
+  CONTROLS
+  {
+    { 1100476000;0;Container;
+                ContainerType=ContentArea }
+
+    { 1100476001;1;Group  ;
+                Name=Group;
+                GroupType=Repeater }
+
+    { 1100476002;2;Field  ;
+                SourceExpr=Id }
+
+    { 1100476003;2;Field  ;
+                SourceExpr=Description;
+                OnDrillDown=VAR
+                              InStr@1100476002 : InStream;
+                              OutStr@1100476006 : OutStream;
+                              BinaryReader@1100476001 : DotNet "'mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.IO.BinaryReader";
+                              BinaryWriter@1100476008 : DotNet "'mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.IO.BinaryWriter";
+                              Encoding@1100476000 : DotNet "'mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Text.Encoding";
+                              MyText@1100476003 : Text;
+                              NewText@1100476007 : Text;
+                              InputLongTextTest@1100476004 : Page 50002;
+                            BEGIN
+                              CALCFIELDS(Description);
+                              Description.CREATEINSTREAM(InStr);
+                              BinaryReader := BinaryReader.BinaryReader(InStr,Encoding.UTF8);
+                              IF NOT ISNULL(BinaryReader) THEN BEGIN   //read value from BLOB field
+                                IF BinaryReader.BaseStream.Length > 0 THEN
+                                  MyText := BinaryReader.ReadString;
+                                BinaryReader.Close;
+                              END;
+
+                              InputLongTextTest.SetText(MyText);
+                              IF InputLongTextTest.RUNMODAL = ACTION::OK THEN BEGIN
+                                NewText := InputLongTextTest.GetText;
+                                IF NewText <> MyText THEN BEGIN     //write value to BLOB field
+                                  CLEAR(Description);
+                                  Description.CREATEOUTSTREAM(OutStr);
+                                  BinaryWriter := BinaryWriter.BinaryWriter(OutStr,Encoding.UTF8);
+                                  BinaryWriter.Write(NewText);
+                                  BinaryWriter.Close;
+                                  MODIFY;
+                                END;
+                              END;
+                            END;
+                             }
+
+  }
+  CODE
+  {
+
+    BEGIN
+    END.
+  }
+}
+
+OBJECT Page 50002 Input Long Text Test
+{
+  OBJECT-PROPERTIES
+  {
+    Date=06-07-18;
+    Time=23:42:48;
+    Modified=Yes;
+    Version List=;
+  }
+  PROPERTIES
+  {
+    SourceTable=Table50000;
+    PageType=StandardDialog;
+  }
+  CONTROLS
+  {
+    { 1100476000;0;Container;
+                ContainerType=ContentArea }
+
+    { 1100476001;1;Field  ;
+                SourceExpr=MyText;
+                MultiLine=Yes }
+
+  }
+  CODE
+  {
+    VAR
+      MyText@1100476000 : Text;
+
+    PROCEDURE SetText@1100476000(pMyText@1100476000 : Text);
+    BEGIN
+      MyText := pMyText;
+    END;
+
+    PROCEDURE GetText@1100476003() : Text;
+    BEGIN
+      EXIT(MyText);
+    END;
+
+    BEGIN
+    END.
+  }
+}
+
