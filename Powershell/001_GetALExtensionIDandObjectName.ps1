@@ -1,4 +1,5 @@
-﻿#get last Extension Number
+﻿#read more about this script at: https://andreilungu.com/al-extension-ids-nav-business-central
+
 $Folder = 'C:\ALExtensionIdsSample\Folder 1'
 $Folder2 = 'C:\ALExtensionIdsSample\Folder 2'
 #let's complicate things for practice purpose and extract the ID from the extension name instead of simply take the Id :)
@@ -26,7 +27,6 @@ $ExtensionNumbers
 $MaxMinNo = $ExtensionNumbers | Measure-Object -Property ExtensionNumber -Maximum -Minimum
 $MaxExtensionNo = $ExtensionNumbers | Where-Object {$_.ExtensionNumber -eq $MaxMinNo.Maximum}
 Write-Output 'Last used Id for page Extensions is: '$($MaxExtensionNo.ExtensionNumber)'ExtensionName: '$($MaxExtensionNo.FileName)
-
 
 $ExtensionNumbers | Where-Object{$_.ObjectName -like 'Transfer Order'}
 $ExtensionNumbers | Where-Object{$_.ExtensionNumber -eq 50292} | Select-Object -Property ObjectName
