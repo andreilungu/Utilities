@@ -16,6 +16,8 @@ foreach($file in $Files)
     $ExtHash.Add("FileName",$File.FullName)
     #match the object name from the first line (after word 'extends'): 
     $ExtHash.Add("ObjectName",(([regex]::Match($stringfirstline,'(?<=extends ).*').Value) -replace '"','').TrimEnd())
+    #OR match the object name from file name: ex Name of file is 'PEX50343 - Test.al' or 'PEX - Test.al'; Object Name is 'Test.al' 
+    #$ExtHash.Add("ObjectName",[regex]::Match($File.Name,'(?<=PEX(?:\d+)? - ).*').Value)
     $ExtHash.Add("ExtensionNumber",$number)
     $PsObject = New-Object PSObject -property $ExtHash
     $ExtensionNumbers += $PsObject
