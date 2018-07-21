@@ -39,7 +39,6 @@ Function Get-ALExtensionileInfo{
     return $ExtensionNumbers
 }
 
-
 # Examples of how to use:
 
 $Folder = 'C:\ALExtensionIdsSample\Folder 1'
@@ -55,8 +54,8 @@ $ExtensionInfo
 $MaxMinNo = $ExtensionInfo | 
             Where-Object{$_.ExtensionType -like 'pageextension'} | 
             Measure-Object -Property ExtensionNumber -Maximum -Minimum
-$MaxExtensionNo = $ExtensionInfo | Where-Object {$_.ExtensionNumber -eq $MaxMinNo.Maximum}
-$MaxExtensionNo
+$ExtensionInfo | Where-Object {($_.ExtensionNumber -eq $MaxMinNo.Maximum) -and 
+                               ($_.ExtensionType -like 'pageextension')}
 
 #get the id of an Extension by the Nav Object Name
 $ExtensionInfo | Where-Object{($_.ObjectName -like 'Transfer Order') -and 
