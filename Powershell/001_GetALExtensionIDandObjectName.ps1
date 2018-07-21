@@ -1,5 +1,5 @@
 ﻿#read more about this script at: https://andreilungu.com/al-extension-ids-nav-business-central
-Function Get-ALExtensionFileInfo{
+Function Get-ALExtensionFilesInfo{
     [CmdletBinding()]
     param(
         [Parameter(Mandatory=$true)][array]$ALExtensionFiles,
@@ -47,7 +47,7 @@ $Files = Get-ChildItem $Folder -Filter '*.al'
 $Files += Get-ChildItem $Folder2 -Filter '*.al'
 
 #get the info from extension files
-$ExtensionInfo = Get-ALExtensionFileInfo -ALExtensionFiles $Files
+$ExtensionInfo = Get-ALExtensionFilesInfo -ALExtensionFiles $Files
 $ExtensionInfo
 
 #get the maximum used id for page extensions
