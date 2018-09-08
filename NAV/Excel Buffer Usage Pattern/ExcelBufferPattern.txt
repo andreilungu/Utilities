@@ -1,0 +1,191 @@
+OBJECT Report 50008 Excel Buffer Usage Test
+{
+  OBJECT-PROPERTIES
+  {
+    Date=08-09-18;
+    Time=08:34:34;
+    Modified=Yes;
+    Version List=;
+  }
+  PROPERTIES
+  {
+    ProcessingOnly=Yes;
+    OnPreReport=VAR
+                  ExcelBuffer@1100476000 : Record 370;
+                BEGIN
+                  ExcelBuffer.LOCKTABLE;
+                  ExcelBuffer.OpenBook(ServerFileName,SheetName);
+                  ExcelBuffer.ReadSheet;
+                  AnalyzeData;
+                END;
+
+  }
+  DATASET
+  {
+  }
+  REQUESTPAGE
+  {
+    PROPERTIES
+    {
+    }
+    CONTROLS
+    {
+      { 1100476000;;Container;
+                  Name=ContentArea;
+                  ContainerType=ContentArea }
+
+      { 1100476001;1;Group  ;
+                  Name=Options;
+                  GroupType=Group }
+
+      { 1100476004;2;Field  ;
+                  Name=FileName;
+                  CaptionML=[ENU=Workbook File Name;
+                             NLD=Werkmapbestandsnaam];
+                  SourceExpr=FileName;
+                  OnValidate=BEGIN
+                               RequestFile;
+                             END;
+
+                  OnAssistEdit=VAR
+                                 ExcelBuffer@1100476000 : Record 370;
+                               BEGIN
+                                 RequestFile;
+                                 SheetName := ExcelBuffer.SelectSheetsName(ServerFileName);
+                               END;
+                                }
+
+      { 1100476003;2;Field  ;
+                  Name=SheetName;
+                  CaptionML=[ENU=Worksheet Name;
+                             NLD=Werkbladnaam];
+                  SourceExpr=SheetName;
+                  OnAssistEdit=VAR
+                                 ExcelBuffer@1100476000 : Record 370;
+                               BEGIN
+                                 IF ServerFileName = '' THEN
+                                   RequestFile;
+
+                                 SheetName := ExcelBuffer.SelectSheetsName(ServerFileName);
+                               END;
+                                }
+
+    }
+  }
+  LABELS
+  {
+  }
+  CODE
+  {
+    VAR
+      SheetName@1100476003 : Text[250];
+      FileName@1100476002 : Text;
+      ServerFileName@1100476001 : Text;
+      EnableSheetName@1100476004 : Boolean INDATASET;
+      FileMgt@1100476005 : Codeunit 419;
+      Text000@1100476008 : TextConst 'ENU=Import Excel File;NLD=Excel-bestand importeren';
+      Text001@1100476011 : TextConst 'ENU=Analyzing Data...\\;NLD=Analyseren gegevens...\\';
+      Text003@1100476006 : TextConst 'ENU=You must enter a file name.;NLD=U moet een bestandsnaam opgeven.';
+      ExcelExtensionTok@1100476007 : TextConst '@@@={Locked};ENU=.xlsx;NLD=.xlsx';
+      ExpectedColumnNotFoundErr@1100476010 : TextConst 'ENU=Expected column name ''%1'' was not found in column no. %2.;NLD=De verwachte kolomnaam ''%1'' is niet gevonden als kolom nummer %2.';
+
+    PROCEDURE RequestFile@6();
+    BEGIN
+      IF FileName <> '' THEN
+        ServerFileName := FileMgt.UploadFile(Text000,FileName)
+      ELSE
+        ServerFileName := FileMgt.UploadFile(Text000,ExcelExtensionTok);
+
+      ValidateServerFileName;
+      FileName := FileMgt.GetFileName(ServerFileName);
+    END;
+
+    LOCAL PROCEDURE ValidateServerFileName@11024002();
+    BEGIN
+      IF ServerFileName = '' THEN BEGIN
+        FileName := '';
+        SheetName := '';
+        ERROR(Text003);
+      END;
+    END;
+
+    LOCAL PROCEDURE AnalyzeData@1100476006();
+    VAR
+      TotalRecNo@1100476000 : Integer;
+      RecNo@1100476001 : Integer;
+      Window@1100476002 : Dialog;
+      CurrRowNo@1100476004 : Integer;
+      ExcelBuffer@1100476003 : Record 370;
+    BEGIN
+      Window.OPEN(
+        Text001 +
+        '@1@@@@@@@@@@@@@@@@@@@@@@@@@\');
+      Window.UPDATE(1,0);
+
+      TotalRecNo := ExcelBuffer.COUNT;
+      IF ExcelBuffer.FINDSET THEN
+        REPEAT
+          RecNo += 1;
+          Window.UPDATE(1,ROUND(RecNo / TotalRecNo * 10000,1));
+          IF ExcelBuffer."Row No." > 1 THEN BEGIN
+            ExcelBuffer.SETRANGE("Row No.",ExcelBuffer."Row No."); //filter on current row
+            CheckExcelRow(ExcelBuffer);
+            UseExcelRowToUpdateCustomer(ExcelBuffer);
+            ExcelBuffer.FINDLAST; //skip other records with the current row. The next record will be the first of next row
+            ExcelBuffer.SETRANGE("Row No.");
+          END ELSE
+            VerifyExcelBufferHeader(ExcelBuffer);
+
+        UNTIL ExcelBuffer.NEXT = 0;
+
+      ExcelBuffer.DELETEALL;
+      Window.CLOSE;
+    END;
+
+    LOCAL PROCEDURE VerifyExcelBufferHeader@1100476004(ExcelBuffer@1100476000 : Record 370);
+    BEGIN
+      CASE ExcelBuffer."Column No." OF
+        //add here your custom check to assure the header of excel file is correct
+        1:;
+        2:;
+        3:;
+      END;
+    END;
+
+    LOCAL PROCEDURE CheckExcelRow@1100476005(VAR ExcelBuffer@1100476000 : Record 370);
+    BEGIN
+      //add here your custom check of the values from the row
+    END;
+
+    LOCAL PROCEDURE UseExcelRowToUpdateCustomer@1100476000(VAR ExcelBuffer@1100476000 : Record 370);
+    VAR
+      ExcelBuffer2@1100476001 : Record 370;
+      CustomerNo@1100476002 : Code[20];
+      CurrentLocationCode@1100476003 : Code[10];
+      NewLocationCode@1100476004 : Code[10];
+      Customer@1100476005 : Record 18;
+    BEGIN
+      ExcelBuffer2.COPYFILTERS(ExcelBuffer);
+      IF ExcelBuffer2.FINDSET THEN
+        REPEAT
+          CASE ExcelBuffer2."Column No." OF
+            1: CustomerNo := ExcelBuffer2."Cell Value as Text";
+            2: CurrentLocationCode := ExcelBuffer2."Cell Value as Text";
+            3: NewLocationCode := ExcelBuffer2."Cell Value as Text";
+          END;
+        UNTIL ExcelBuffer2.NEXT = 0;
+
+      IF Customer.GET(CustomerNo) AND (Customer."Location Code" = CurrentLocationCode) THEN BEGIN
+        Customer."Location Code" := NewLocationCode;
+        Customer.MODIFY;
+      END;
+    END;
+
+    BEGIN
+    END.
+  }
+  RDLDATA
+  {
+  }
+}
+
