@@ -1,0 +1,189 @@
+OBJECT Report 50009 Excel Buffer Usage Test 2
+{
+  OBJECT-PROPERTIES
+  {
+    Date=10-09-18;
+    Time=11:09:56;
+    Modified=Yes;
+    Version List=;
+  }
+  PROPERTIES
+  {
+    ProcessingOnly=Yes;
+    OnPreReport=VAR
+                  ExcelBuffer@1100476000 : Record 370;
+                BEGIN
+                  ExcelBuffer.LOCKTABLE;
+                  ExcelBuffer.OpenBook(ServerFileName,SheetName);
+                  ExcelBuffer.ReadSheet;
+                  AnalyzeData;
+                END;
+
+  }
+  DATASET
+  {
+  }
+  REQUESTPAGE
+  {
+    PROPERTIES
+    {
+    }
+    CONTROLS
+    {
+      { 1100476000;;Container;
+                  Name=ContentArea;
+                  ContainerType=ContentArea }
+
+      { 1100476001;1;Group  ;
+                  Name=Options;
+                  GroupType=Group }
+
+      { 1100476004;2;Field  ;
+                  Name=FileName;
+                  CaptionML=[ENU=Workbook File Name;
+                             NLD=Werkmapbestandsnaam];
+                  SourceExpr=FileName;
+                  OnValidate=BEGIN
+                               RequestFile;
+                             END;
+
+                  OnAssistEdit=VAR
+                                 ExcelBuffer@1100476000 : Record 370;
+                               BEGIN
+                                 RequestFile;
+                                 SheetName := ExcelBuffer.SelectSheetsName(ServerFileName);
+                               END;
+                                }
+
+      { 1100476003;2;Field  ;
+                  Name=SheetName;
+                  CaptionML=[ENU=Worksheet Name;
+                             NLD=Werkbladnaam];
+                  SourceExpr=SheetName;
+                  OnAssistEdit=VAR
+                                 ExcelBuffer@1100476000 : Record 370;
+                               BEGIN
+                                 IF ServerFileName = '' THEN
+                                   RequestFile;
+
+                                 SheetName := ExcelBuffer.SelectSheetsName(ServerFileName);
+                               END;
+                                }
+
+    }
+  }
+  LABELS
+  {
+  }
+  CODE
+  {
+    VAR
+      SheetName@1100476003 : Text[250];
+      FileName@1100476002 : Text;
+      ServerFileName@1100476001 : Text;
+      EnableSheetName@1100476004 : Boolean INDATASET;
+      FileMgt@1100476005 : Codeunit 419;
+      Text000@1100476008 : TextConst 'ENU=Import Excel File;NLD=Excel-bestand importeren';
+      Text001@1100476011 : TextConst 'ENU=Analyzing Data...\\;NLD=Analyseren gegevens...\\';
+      Text003@1100476006 : TextConst 'ENU=You must enter a file name.;NLD=U moet een bestandsnaam opgeven.';
+      ExcelExtensionTok@1100476007 : TextConst '@@@={Locked};ENU=.xlsx;NLD=.xlsx';
+      ExpectedColumnNotFoundErr@1100476010 : TextConst 'ENU=Expected column name ''%1'' was not found in column no. %2.;NLD=De verwachte kolomnaam ''%1'' is niet gevonden als kolom nummer %2.';
+      TempExcelBuffer@1100476000 : TEMPORARY Record 370;
+      CustomerNo@1100476009 : Code[20];
+      CurrLocationCode@1100476012 : Code[10];
+      NewLocationCode@1100476013 : Code[10];
+      OldRowNo@1100476014 : Integer;
+
+    PROCEDURE RequestFile@6();
+    BEGIN
+      IF FileName <> '' THEN
+        ServerFileName := FileMgt.UploadFile(Text000,FileName)
+      ELSE
+        ServerFileName := FileMgt.UploadFile(Text000,ExcelExtensionTok);
+
+      ValidateServerFileName;
+      FileName := FileMgt.GetFileName(ServerFileName);
+    END;
+
+    LOCAL PROCEDURE ValidateServerFileName@11024002();
+    BEGIN
+      IF ServerFileName = '' THEN BEGIN
+        FileName := '';
+        SheetName := '';
+        ERROR(Text003);
+      END;
+    END;
+
+    LOCAL PROCEDURE AnalyzeData@1100476006();
+    VAR
+      TotalRecNo@1100476000 : Integer;
+      RecNo@1100476001 : Integer;
+      Window@1100476002 : Dialog;
+      CurrRowNo@1100476004 : Integer;
+      ExcelBuffer@1100476003 : Record 370;
+    BEGIN
+      Window.OPEN(
+        Text001 +
+        '@1@@@@@@@@@@@@@@@@@@@@@@@@@\');
+      Window.UPDATE(1,0);
+
+      TotalRecNo := ExcelBuffer.COUNT;
+      IF ExcelBuffer.FINDSET THEN
+        REPEAT
+          RecNo += 1;
+          Window.UPDATE(1,ROUND(RecNo / TotalRecNo * 10000,1));
+
+           IF ExcelBuffer."Row No." <> OldRowNo THEN BEGIN
+            OldRowNo := ExcelBuffer."Row No.";
+            CustomerNo := ''; CurrLocationCode := ''; NewLocationCode := ''
+          END;
+
+          IF ExcelBuffer."Row No." > 1 THEN BEGIN
+            TempExcelBuffer.GET(1,ExcelBuffer."Column No.");
+            CASE TempExcelBuffer.Comment OF
+              'CustNo': CustomerNo := ExcelBuffer."Cell Value as Text";
+              'CurrLoc': CurrLocationCode := ExcelBuffer."Cell Value as Text";
+              'NextLoc': NewLocationCode := ExcelBuffer."Cell Value as Text";
+            END;
+            UseExcelRowToUpdateCustomer(ExcelBuffer);
+          END ELSE
+            CreateExcelBufferHeader(ExcelBuffer);
+
+        UNTIL ExcelBuffer.NEXT = 0;
+
+      ExcelBuffer.DELETEALL;
+      Window.CLOSE;
+    END;
+
+    LOCAL PROCEDURE CreateExcelBufferHeader@1100476004(ExcelBuffer@1100476000 : Record 370);
+    BEGIN
+      TempExcelBuffer := ExcelBuffer;
+      CASE ExcelBuffer."Column No." OF
+        1: TempExcelBuffer.Comment := 'CustNo';
+        2: TempExcelBuffer.Comment := 'CurrLoc';
+        3: TempExcelBuffer.Comment := 'NextLoc';
+      END;
+      TempExcelBuffer.INSERT;
+    END;
+
+    LOCAL PROCEDURE UseExcelRowToUpdateCustomer@1100476000(VAR ExcelBuffer@1100476000 : Record 370);
+    VAR
+      Customer@1100476005 : Record 18;
+    BEGIN
+      IF (CustomerNo = '') OR (CurrLocationCode = '') OR (NewLocationCode = '') THEN
+        EXIT;
+
+      IF Customer.GET(CustomerNo) AND (Customer."Location Code" = CurrLocationCode) THEN BEGIN
+        Customer."Location Code" := NewLocationCode;
+        Customer.MODIFY;
+      END;
+    END;
+
+    BEGIN
+    END.
+  }
+  RDLDATA
+  {
+  }
+}
+
