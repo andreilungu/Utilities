@@ -1,0 +1,239 @@
+OBJECT Table 50005 Exchange Rate Ro
+{
+  OBJECT-PROPERTIES
+  {
+    Date=27-09-18;
+    Time=17:09:49;
+    Modified=Yes;
+    Version List=;
+  }
+  PROPERTIES
+  {
+  }
+  FIELDS
+  {
+    { 1   ;   ;Date                ;Date           }
+    { 2   ;   ;OrigCurrency        ;Code10         }
+    { 3   ;   ;Currency            ;Code10         }
+    { 10  ;   ;Multiplier          ;Decimal        }
+    { 20  ;   ;Rate                ;Decimal       ;DecimalPlaces=4:4 }
+  }
+  KEYS
+  {
+    {    ;Date,OrigCurrency,Currency              ;Clustered=Yes }
+  }
+  FIELDGROUPS
+  {
+  }
+  CODE
+  {
+
+    BEGIN
+    END.
+  }
+}
+
+OBJECT Codeunit 50005 Exchange Rate Ro Mgt
+{
+  OBJECT-PROPERTIES
+  {
+    Date=27-09-18;
+    Time=17:22:26;
+    Modified=Yes;
+    Version List=;
+  }
+  PROPERTIES
+  {
+    OnRun=BEGIN
+            UpdateExchangeRates;
+          END;
+
+  }
+  CODE
+  {
+    VAR
+      ImportDataText@1100476000 : TextConst 'ENU=Importing Data..';
+
+    PROCEDURE UpdateExchangeRates@1100476005();
+    VAR
+      HttpStatusCode@1100476007 : DotNet "'System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Net.HttpStatusCode";
+      ResponseHeaders@1100476006 : DotNet "'System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Collections.Specialized.NameValueCollection";
+      HttpWebRequestMgt@1100476003 : Codeunit 1297;
+      XmlDoc@1100476025 : DotNet "'System.Xml, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Xml.XmlDocument";
+      XMLNodeList1@1100476024 : DotNet "'System.Xml, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Xml.XmlNodeList";
+      XMLNode1@1100476023 : DotNet "'System.Xml, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Xml.XmlNode";
+      XMLDOMManagement@1100476022 : Codeunit 6224;
+      XMLTR@1100476021 : DotNet "'System.Xml, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Xml.XmlTextReader";
+      XMLElement@1100476018 : DotNet "'System.Xml, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Xml.XmlElement";
+      XMLAttributes@1100476016 : DotNet "'System.Xml, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Xml.XmlAttributeCollection";
+      TempBlob@1100476005 : Record 99008535;
+      BaseUrl@1100476011 : Text;
+      result@1100476000 : Text;
+      File@1100476001 : File;
+      OutStream@1100476002 : OutStream;
+      Instr@1100476004 : InStream;
+      NodeNo@1100476008 : Integer;
+      OriginalCurr@1100476009 : Code[10];
+      CurrDate@1100476010 : Date;
+      NodeNoCube@1100476015 : Integer;
+      Currency@1100476017 : Code[10];
+      ExchangeRate@1100476019 : Decimal;
+      Window@1100476020 : Dialog;
+      Multiplier@1100476012 : Decimal;
+    BEGIN
+      BaseUrl := 'http://www.bnr.ro/files/xml/years/nbrfxrates2018.xml';
+
+      HttpWebRequestMgt.Initialize(BaseUrl);
+      HttpWebRequestMgt.DisableUI;
+      HttpWebRequestMgt.SetMethod('GET');
+      HttpWebRequestMgt.SetReturnType('application/xml');
+
+      TempBlob.INIT;
+      TempBlob.Blob.CREATEINSTREAM(Instr);
+
+      IF NOT HttpWebRequestMgt.GetResponse(Instr,HttpStatusCode,ResponseHeaders) THEN
+        ERROR('An error occured');
+
+      IF ISNULL(XmlDoc) THEN
+        XmlDoc := XmlDoc.XmlDocument;
+
+      IF ISNULL(XMLTR) THEN
+        XMLTR := XMLTR.XmlTextReader(Instr);
+      XMLTR.Namespaces(FALSE);
+      XmlDoc.Load(XMLTR);
+
+      OriginalCurr := XmlDoc.SelectSingleNode('//Body/OrigCurrency').InnerText; //get reference currency: RON
+
+      Window.OPEN(ImportDataText + '@1@@@@@@@@@@@@@@@@@@@@@@@@@\');
+
+      XMLNodeList1 := XmlDoc.SelectNodes('//Body/Cube');
+      REPEAT //read each Cube node
+        Window.UPDATE(1,ROUND(NodeNo / XMLNodeList1.Count * 10000,1));
+        XMLNode1 := XMLNodeList1.Item(NodeNo);
+        XMLAttributes := XMLNode1.Attributes;
+        CurrDate := GetDateFromString(XMLAttributes.GetNamedItem('date').Value); //get Date of Exchange Rate
+        FOREACH XMLElement IN XMLNode1 DO BEGIN //read each Rate from current Cube
+          Multiplier := 0;
+          XMLAttributes := XMLElement.Attributes;
+          Currency := XMLAttributes.GetNamedItem('currency').Value;
+          IF NOT ISNULL(XMLAttributes.GetNamedItem('multiplier')) THEN
+            EVALUATE(Multiplier,XMLAttributes.GetNamedItem('multiplier').Value);
+          EVALUATE(ExchangeRate,CONVERTSTR(XMLElement.InnerText,'.',GetSystemDecimalSeparator)); //get exchange rate and replace decimal separator with the one the current system has
+          InsertExchangeRate(CurrDate,OriginalCurr,Currency,Multiplier,ExchangeRate);
+        END;
+        NodeNo += 1;
+      UNTIL NodeNo = XMLNodeList1.Count;
+
+      Window.CLOSE;
+      MESSAGE('Update Completed');
+    END;
+
+    LOCAL PROCEDURE InsertExchangeRate@1100476000(DateCurr@1100476000 : Date;OrigCurr@1100476001 : Code[10];Currency@1100476002 : Code[10];Multiplier@1100476005 : Decimal;Rate@1100476003 : Decimal);
+    VAR
+      ExchangeRateRo@1100476004 : Record 50005;
+    BEGIN
+      IF ExchangeRateRo.GET(DateCurr,OrigCurr,Currency) THEN
+        EXIT;
+      ExchangeRateRo.INIT;
+      ExchangeRateRo.Date := DateCurr;
+      ExchangeRateRo.OrigCurrency := OrigCurr;
+      ExchangeRateRo.Currency := Currency;
+      ExchangeRateRo.Rate := Rate;
+      ExchangeRateRo.Multiplier := Multiplier;
+      ExchangeRateRo.INSERT(TRUE);
+    END;
+
+    LOCAL PROCEDURE GetDateFromString@1100476024(DateAsString@1100476000 : Text) : Date;
+    VAR
+      Year@1100476001 : Integer;
+      Month@1100476002 : Integer;
+      Day@1100476003 : Integer;
+    BEGIN
+      EVALUATE(Year,COPYSTR(DateAsString,1,4));
+      EVALUATE(Month,COPYSTR(DateAsString,6,2));
+      EVALUATE(Day,COPYSTR(DateAsString,9,2));
+      EXIT(DMY2DATE(Day,Month,Year));
+    END;
+
+    LOCAL PROCEDURE GetSystemDecimalSeparator@1100476002() : Text;
+    VAR
+      MyDecimal@1100476000 : Decimal;
+      MyDecimalAsText@1100476001 : Text;
+    BEGIN
+      MyDecimal := 10000.25;
+      MyDecimalAsText := FORMAT(MyDecimal);
+      EXIT(FORMAT(MyDecimalAsText[7]));
+    END;
+
+    BEGIN
+    END.
+  }
+}
+
+OBJECT Page 50005 Exchange Currencies RO
+{
+  OBJECT-PROPERTIES
+  {
+    Date=27-09-18;
+    Time=17:11:49;
+    Modified=Yes;
+    Version List=;
+  }
+  PROPERTIES
+  {
+    SourceTable=Table50005;
+    PageType=List;
+    OnOpenPage=BEGIN
+                 IF ISEMPTY THEN
+                   INSERT;
+
+                 SETCURRENTKEY(Date);
+                 ASCENDING(FALSE);
+                 FINDFIRST;
+               END;
+
+    ActionList=ACTIONS
+    {
+      { 1100476006;  ;ActionContainer;
+                      ActionContainerType=ActionItems }
+      { 1100476007;1 ;Action    ;
+                      Name=Update Rates;
+                      RunObject=Codeunit 50005;
+                      Promoted=Yes;
+                      Image=Import;
+                      PromotedCategory=Process }
+    }
+  }
+  CONTROLS
+  {
+    { 1100476000;0;Container;
+                ContainerType=ContentArea }
+
+    { 1100476001;1;Group  ;
+                Name=Group;
+                GroupType=Repeater }
+
+    { 1100476002;2;Field  ;
+                SourceExpr=Date }
+
+    { 1100476003;2;Field  ;
+                SourceExpr=OrigCurrency }
+
+    { 1100476004;2;Field  ;
+                SourceExpr=Currency }
+
+    { 1100476005;2;Field  ;
+                SourceExpr=Multiplier }
+
+    { 1100476008;2;Field  ;
+                SourceExpr=Rate }
+
+  }
+  CODE
+  {
+
+    BEGIN
+    END.
+  }
+}
+
