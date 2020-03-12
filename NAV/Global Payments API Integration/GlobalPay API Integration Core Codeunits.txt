@@ -1,0 +1,1908 @@
+OBJECT Codeunit 50020 GlobalPay API Mgmt.
+{
+  OBJECT-PROPERTIES
+  {
+    Date=03/11/20;
+    Time=11:17:04 AM;
+    Modified=Yes;
+    Version List=TASK_ID_REMOVED;
+  }
+  PROPERTIES
+  {
+    OnRun=VAR
+            GlobalPayAPISetupLine@1000000000 : Record 50001;
+            JsonTxt@1000000001 : Text;
+            EFTTransactionResponse@1000000002 : Record 50004;
+          BEGIN
+            //MESSAGE(EncryptSHA512('2ce70d2b-240e-487a-a1d3-a4f86c7081a9e8O9I2Ohp4Wg4GzU'));
+
+            JsonTxt := '{' +
+              '"account_name": "Transaction_Processing",' +
+              '"channel": "CP",' +
+              '"type": "SALE",' +
+              '"amount": "86",' +
+              '"currency": "USD",' +
+              '"reference": "00000T09A4000000462_20000",'+
+              '"payment_method": {' +
+                '"entry_mode": "SWIPE",' +
+                '"card": {' +
+                  '"track": "%B4507450161738940^GUremoveddata00011?"' +
+                '}' +
+              '}' +
+            '}';
+
+            HideTrackDataInJsonRequest(JsonTxt);
+          END;
+
+  }
+  CODE
+  {
+    VAR
+      Json@1000000000 : DotNet "'mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.String";
+      GlobalPayAPISetup@1000000001 : Record 50000;
+      GlobalPaySetupRetrieved@1000000002 : Boolean;
+      PaymentAmount@1000000003 : Decimal;
+      Currency@1000000004 : Code[10];
+      Reference@1000000005 : Text[50];
+      CardNo@1000000006 : Text[30];
+      ExpiryMonth@1000000007 : Text[2];
+      ExpiryYear@1000000008 : Text[2];
+      CardTrack@1000000009 : Text;
+
+    PROCEDURE EncryptSHA512@1000000000(Text@1000000000 : Text) HashStr : Text;
+    VAR
+      Sha512@1000000001 : DotNet "'mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Security.Cryptography.SHA512Managed";
+      MemoryStream@1000000002 : DotNet "'mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.IO.MemoryStream";
+      Encoding@1000000003 : DotNet "'mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Text.Encoding";
+      Bytes@1000000004 : DotNet "'mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Array";
+      HashArr@1000000005 : DotNet "'mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Array";
+      Byte@1000000006 : DotNet "'mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Byte";
+      i@1000000007 : Integer;
+    BEGIN
+      MemoryStream := MemoryStream.MemoryStream();
+      Encoding := Encoding.UTF8();
+      Bytes := Encoding.GetBytes(Text);
+      MemoryStream.Write(Bytes,0,Bytes.Length);
+      MemoryStream.Position := 0;
+      Sha512 := Sha512.SHA512Managed();
+      HashArr := Sha512.ComputeHash(MemoryStream);
+      FOR i := 0 TO (HashArr.Length - 1) DO BEGIN
+        Byte := HashArr.GetValue(i);
+        HashStr +=  Byte.ToString('x2');
+      END;
+    END;
+
+    PROCEDURE LogAPICall@16(Request@1000 : Text;EndPoint@1001 : Text;Response@1002 : Text;HttpMethod@1005 : Code[10]);
+    VAR
+      GlobalPayAPILog@1003 : Record 50003;
+      OutStream1@1004 : OutStream;
+    BEGIN
+      GlobalPayAPILog.INIT;
+      GlobalPayAPILog.EndPoint := COPYSTR(EndPoint,1,MAXSTRLEN(EndPoint));
+      GlobalPayAPILog."Date and Time" := CURRENTDATETIME;
+      GlobalPayAPILog."HTTP Method" := HttpMethod;
+      IF STRPOS(Response,'error') > 0 THEN
+        GlobalPayAPILog.Type := GlobalPayAPILog.Type::Error
+      ELSE
+        GlobalPayAPILog.Type := GlobalPayAPILog.Type::Information;
+      GlobalPayAPILog.INSERT;
+      GlobalPayAPILog.Request.CREATEOUTSTREAM(OutStream1);
+      OutStream1.WRITETEXT(Request);
+      GlobalPayAPILog.Response.CREATEOUTSTREAM(OutStream1);
+      OutStream1.WRITETEXT(Response);
+      GlobalPayAPILog.MODIFY;
+    END;
+
+    LOCAL PROCEDURE LogApiError@3(ErrorMessage@1000 : Text;RequestText@1002 : Text);
+    VAR
+      GlobalPayAPILog@1001 : Record 50003;
+      OutStream1@1003 : OutStream;
+    BEGIN
+      GlobalPayAPILog.INIT;
+      GlobalPayAPILog.EndPoint := ErrorMessage;
+      GlobalPayAPILog."Date and Time" := CURRENTDATETIME;
+      GlobalPayAPILog.Type := GlobalPayAPILog.Type::Error;
+      GlobalPayAPILog.INSERT;
+      GlobalPayAPILog.Request.CREATEOUTSTREAM(OutStream1);
+      OutStream1.WRITETEXT(RequestText);
+      GlobalPayAPILog.MODIFY;
+    END;
+
+    PROCEDURE GetAccessToken@1000000001(VAR GlobalPayAPISetupLine@1000000003 : Record 50001) : Text;
+    VAR
+      GlobalPayJsonManagement@1000000000 : Codeunit 50021;
+      EndPoint@1000000001 : Text;
+      RequestTxt@1000000002 : Text;
+      nonce@1000000004 : Text;
+      DecompressionGzipStream@1000000005 : DotNet "'System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.IO.Compression.GZipStream";
+      TempBlob@1000000006 : Record 99008535;
+      OutStr@1000000007 : OutStream;
+      InStr@1000000008 : InStream;
+      CompressionMode@1000000009 : DotNet "'System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.IO.Compression.CompressionMode";
+      ResponseTextDecompressed@1000000010 : Text;
+      MyFile@1000000011 : File;
+      txt@1000000012 : Text;
+      TempDataExchField@1000000013 : TEMPORARY Record 1221;
+      DotNetDateTime@1000000016 : DotNet "'mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.DateTime";
+      NewToken@1000000014 : Text;
+      FileManagement@1000000015 : Codeunit 419;
+    BEGIN
+      GetAPISetup(GlobalPayAPISetupLine."Pos Terminal No.");
+
+      IF GlobalPayAPISetupLine.Token.HASVALUE THEN
+        IF GlobalPayAPISetupLine."Token Expiration DateTime" > (CURRENTDATETIME + 60000) THEN
+          EXIT(GlobalPayAPISetupLine.ReadTextFromBLOB(GlobalPayAPISetupLine.FIELDNO(Token))); //if token is not expired, use it
+
+      nonce := FORMAT(CURRENTDATETIME);
+
+      GlobalPayJsonManagement.StartJSon;
+      GlobalPayJsonManagement.AddToJSon('app_id', GlobalPayAPISetupLine."App Id");
+      GlobalPayJsonManagement.AddToJSon('nonce', nonce);
+      GlobalPayJsonManagement.AddToJSon('secret', EncryptSHA512(nonce + GlobalPayAPISetupLine."App Key"));
+      GlobalPayJsonManagement.AddToJSon('grant_type', 'client_credentials');
+      GlobalPayJsonManagement.EndJSon;
+
+      Json := Json.Copy(GlobalPayJsonManagement.GetJSon());
+      RequestTxt := Json;
+
+      EndPoint := GlobalPayAPISetup."Access Token API URL";
+      GlobalPayJsonManagement.UploadJSon(EndPoint,'',Json,'POST',GlobalPayAPISetup."X-GP-Version");
+
+      IF FileManagement.ServerFileExists(Json) THEN BEGIN //if response was gzip compressed, we saved it to temp. file and we need to decompress it. Json contains the temp. file path in this case
+        TempBlob.Blob.CREATEOUTSTREAM(OutStr);
+        MyFile.OPEN(Json);
+        MyFile.CREATEINSTREAM(InStr);
+        DecompressionGzipStream := DecompressionGzipStream.GZipStream(InStr,CompressionMode.Decompress);
+        DecompressionGzipStream.CopyTo(OutStr);
+        TempBlob.Blob.CREATEINSTREAM(InStr,TEXTENCODING::UTF8);
+        WHILE NOT InStr.EOS DO BEGIN
+          InStr.READTEXT(txt);
+          ResponseTextDecompressed += txt;
+        END;
+        Json := ResponseTextDecompressed;
+      END;
+
+      GlobalPayJsonManagement.ReadJSon(Json,TempDataExchField);
+      NewToken := GlobalPayJsonManagement.GetJsonValue(TempDataExchField,'token');
+      GlobalPayAPISetupLine.WriteTextToBLOB(GlobalPayAPISetupLine.FIELDNO(Token),NewToken );
+      GlobalPayAPISetupLine.FIND;
+      EVALUATE(GlobalPayAPISetupLine."Token Seconds To Expire",GlobalPayJsonManagement.GetJsonValue(TempDataExchField,'seconds_to_expire'));
+      DotNetDateTime := DotNetDateTime.Parse(GlobalPayJsonManagement.GetJsonValue(TempDataExchField,'time_created'));
+      GlobalPayAPISetupLine."Token Creation DateTime" := DotNetDateTime;
+      GlobalPayAPISetupLine."Token Expiration DateTime" := DotNetDateTime.AddSeconds(GlobalPayAPISetupLine."Token Seconds To Expire");
+      GlobalPayAPISetupLine.MODIFY;
+      LogAPICall(RequestTxt,EndPoint,Json,'POST');
+      COMMIT;
+      EXIT(NewToken);
+    END;
+
+    PROCEDURE CreateTransaction@1000000003(VAR GlobalPayAPISetupLine@1000000003 : Record 50001) : Text;
+    VAR
+      GlobalPayJsonManagement@1000000000 : Codeunit 50021;
+      EndPoint@1000000001 : Text;
+      RequestTxt@1000000002 : Text;
+      TempDataExchField@1000000013 : TEMPORARY Record 1221;
+      AccessToken@1000000004 : Text;
+      DecompressionGzipStream@1000000017 : DotNet "'System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.IO.Compression.GZipStream";
+      TempBlob@1000000016 : Record 99008535;
+      OutStr@1000000015 : OutStream;
+      InStr@1000000014 : InStream;
+      CompressionMode@1000000012 : DotNet "'System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.IO.Compression.CompressionMode";
+      ResponseTextDecompressed@1000000011 : Text;
+      MyFile@1000000010 : File;
+      txt@1000000009 : Text;
+      FileManagement@1000000005 : Codeunit 419;
+    BEGIN
+      AccessToken := GetAccessToken(GlobalPayAPISetupLine);
+
+      GetAPISetup(GlobalPayAPISetupLine."Pos Terminal No.");
+
+      GlobalPayJsonManagement.StartJSon;
+      GlobalPayJsonManagement.AddToJSon('account_name', 'Transaction_Processing');
+      GlobalPayJsonManagement.AddToJSon('channel', 'CP');
+      GlobalPayJsonManagement.AddToJSon('type', 'SALE');
+      GlobalPayJsonManagement.AddToJSon('amount',FORMAT(PaymentAmount * 100,0,1));
+      GlobalPayJsonManagement.AddToJSon('currency',Currency);
+      GlobalPayJsonManagement.AddToJSon('reference',Reference);
+      GlobalPayJsonManagement.AddJSonBranch('payment_method');
+
+      IF GlobalPayAPISetup."Use MSR Card Reader" AND (CardTrack <> '') THEN
+        GlobalPayJsonManagement.AddToJSon('entry_mode','SWIPE')
+      ELSE
+        GlobalPayJsonManagement.AddToJSon('entry_mode','MANUAL');
+
+      GlobalPayJsonManagement.AddJSonBranch('card');
+
+      IF GlobalPayAPISetup."Use MSR Card Reader" AND (CardTrack <> '') THEN
+        GlobalPayJsonManagement.AddToJSon('track',CardTrack)
+      ELSE BEGIN
+        GlobalPayJsonManagement.AddToJSon('number',CardNo);
+        GlobalPayJsonManagement.AddToJSon('expiry_month',ExpiryMonth);
+        GlobalPayJsonManagement.AddToJSon('expiry_year',ExpiryYear);
+      END;
+
+      GlobalPayJsonManagement.EndJSonBranch; //end card branch
+      GlobalPayJsonManagement.EndJSonBranch; //end payment_method branch
+      GlobalPayJsonManagement.EndJSon;
+
+      Json := Json.Copy(GlobalPayJsonManagement.GetJSon());
+      RequestTxt := Json;
+
+      EndPoint := GlobalPayAPISetup."Create Trans. API URL";
+      GlobalPayJsonManagement.UploadJSon(EndPoint,AccessToken,Json,'POST',GlobalPayAPISetup."X-GP-Version");
+
+      IF FileManagement.ServerFileExists(Json) THEN BEGIN //if response was gzip compressed, we saved it to temp. file and we need to decompress it. Json contains the temp. file path in this case
+        TempBlob.Blob.CREATEOUTSTREAM(OutStr);
+        MyFile.OPEN(Json);
+        MyFile.CREATEINSTREAM(InStr);
+        DecompressionGzipStream := DecompressionGzipStream.GZipStream(InStr,CompressionMode.Decompress);
+        DecompressionGzipStream.CopyTo(OutStr);
+        TempBlob.Blob.CREATEINSTREAM(InStr,TEXTENCODING::UTF8);
+        WHILE NOT InStr.EOS DO BEGIN
+          InStr.READTEXT(txt);
+          ResponseTextDecompressed += txt;
+        END;
+        Json := ResponseTextDecompressed;
+      END;
+
+      IF (NOT GlobalPayAPISetup."Show Track Data In Request Log") AND GlobalPayAPISetup."Use MSR Card Reader" AND (CardTrack <> '') THEN
+        RequestTxt := HideTrackDataInJsonRequest(RequestTxt);
+
+      IF (NOT GlobalPayAPISetup."Show Card No In Request Log") AND (CardNo <> '') THEN
+        RequestTxt := HideCardNoInJsonRequest(RequestTxt);
+
+      LogAPICall(RequestTxt,EndPoint,Json,'POST');
+      COMMIT;
+
+      //GlobalPayJsonManagement.ReadJSon(Json,TempDataExchField);
+      //TestJsonInTable(Json,TempDataExchField);
+      EXIT(FORMAT(Json));
+    END;
+
+    PROCEDURE RefundTransaction@1000000010(VAR GlobalPayAPISetupLine@1000000003 : Record 50001;VAR EFTTransactionResponse@1000000006 : Record 50004) : Text;
+    VAR
+      GlobalPayJsonManagement@1000000000 : Codeunit 50021;
+      EndPoint@1000000001 : Text;
+      RequestTxt@1000000002 : Text;
+      TempDataExchField@1000000013 : TEMPORARY Record 1221;
+      AccessToken@1000000004 : Text;
+      DecompressionGzipStream@1000000017 : DotNet "'System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.IO.Compression.GZipStream";
+      TempBlob@1000000016 : Record 99008535;
+      OutStr@1000000015 : OutStream;
+      InStr@1000000014 : InStream;
+      CompressionMode@1000000012 : DotNet "'System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.IO.Compression.CompressionMode";
+      ResponseTextDecompressed@1000000011 : Text;
+      MyFile@1000000010 : File;
+      txt@1000000009 : Text;
+      FileManagement@1000000005 : Codeunit 419;
+      JsonMgt@1000000008 : Codeunit 50021;
+      ResultCode@1000000007 : Text;
+    BEGIN
+      AccessToken := GetAccessToken(GlobalPayAPISetupLine);
+
+      GetAPISetup(GlobalPayAPISetupLine."Pos Terminal No.");
+
+      GlobalPayJsonManagement.StartJSon;
+      GlobalPayJsonManagement.AddToJSon('amount', FORMAT(PaymentAmount * 100,0,1));
+      GlobalPayJsonManagement.EndJSon;
+
+      Json := Json.Copy(GlobalPayJsonManagement.GetJSon());
+      RequestTxt := Json;
+
+      EndPoint := STRSUBSTNO(GlobalPayAPISetup."Refund API URL",EFTTransactionResponse."GP Transaction Id");
+      GlobalPayJsonManagement.UploadJSon(EndPoint,AccessToken,Json,'POST',GlobalPayAPISetup."X-GP-Version");
+
+      IF FileManagement.ServerFileExists(Json) THEN BEGIN //if response was gzip compressed, we saved it to temp. file and we need to decompress it. Json contains the temp. file path in this case
+        TempBlob.Blob.CREATEOUTSTREAM(OutStr);
+        MyFile.OPEN(Json);
+        MyFile.CREATEINSTREAM(InStr);
+        DecompressionGzipStream := DecompressionGzipStream.GZipStream(InStr,CompressionMode.Decompress);
+        DecompressionGzipStream.CopyTo(OutStr);
+        TempBlob.Blob.CREATEINSTREAM(InStr,TEXTENCODING::UTF8);
+        WHILE NOT InStr.EOS DO BEGIN
+          InStr.READTEXT(txt);
+          ResponseTextDecompressed += txt;
+        END;
+        Json := ResponseTextDecompressed;
+      END;
+
+      LogAPICall(RequestTxt,EndPoint,Json,'POST');
+
+      IF STRPOS(Json,'error') = 0 THEN BEGIN
+        JsonMgt.ReadJSon(Json,TempDataExchField);
+        ResultCode := JsonMgt.GetJsonValue(TempDataExchField,'action.result_code');
+        IF ResultCode = 'SUCCESS' THEN BEGIN
+          EFTTransactionResponse."Amount Refunded" += PaymentAmount;
+          EFTTransactionResponse.MODIFY;
+        END;
+      END;
+
+      COMMIT;
+
+      //GlobalPayJsonManagement.ReadJSon(Json,TempDataExchField);
+      //TestJsonInTable(Json,TempDataExchField);
+      EXIT(FORMAT(Json));
+    END;
+
+    PROCEDURE ReverseTransaction@1000000011(VAR GlobalPayAPISetupLine@1000000003 : Record 50001;VAR EFTTransactionResponse@1000000006 : Record 50004) : Text;
+    VAR
+      GlobalPayJsonManagement@1000000000 : Codeunit 50021;
+      EndPoint@1000000001 : Text;
+      RequestTxt@1000000002 : Text;
+      TempDataExchField@1000000013 : TEMPORARY Record 1221;
+      AccessToken@1000000004 : Text;
+      DecompressionGzipStream@1000000017 : DotNet "'System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.IO.Compression.GZipStream";
+      TempBlob@1000000016 : Record 99008535;
+      OutStr@1000000015 : OutStream;
+      InStr@1000000014 : InStream;
+      CompressionMode@1000000012 : DotNet "'System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.IO.Compression.CompressionMode";
+      ResponseTextDecompressed@1000000011 : Text;
+      MyFile@1000000010 : File;
+      txt@1000000009 : Text;
+      FileManagement@1000000005 : Codeunit 419;
+      JsonMgt@1000000007 : Codeunit 50021;
+      ResultCode@1000000008 : Text;
+    BEGIN
+      AccessToken := GetAccessToken(GlobalPayAPISetupLine);
+
+      GetAPISetup(GlobalPayAPISetupLine."Pos Terminal No.");
+
+      GlobalPayJsonManagement.StartJSon;
+      GlobalPayJsonManagement.AddToJSon('amount', FORMAT(PaymentAmount * 100,0,1));
+      GlobalPayJsonManagement.EndJSon;
+
+      Json := Json.Copy(GlobalPayJsonManagement.GetJSon());
+      RequestTxt := Json;
+
+      EndPoint := STRSUBSTNO(GlobalPayAPISetup."Reverse API URL",EFTTransactionResponse."GP Transaction Id");
+      GlobalPayJsonManagement.UploadJSon(EndPoint,AccessToken,Json,'POST',GlobalPayAPISetup."X-GP-Version");
+
+      IF FileManagement.ServerFileExists(Json) THEN BEGIN //if response was gzip compressed, we saved it to temp. file and we need to decompress it. Json contains the temp. file path in this case
+        TempBlob.Blob.CREATEOUTSTREAM(OutStr);
+        MyFile.OPEN(Json);
+        MyFile.CREATEINSTREAM(InStr);
+        DecompressionGzipStream := DecompressionGzipStream.GZipStream(InStr,CompressionMode.Decompress);
+        DecompressionGzipStream.CopyTo(OutStr);
+        TempBlob.Blob.CREATEINSTREAM(InStr,TEXTENCODING::UTF8);
+        WHILE NOT InStr.EOS DO BEGIN
+          InStr.READTEXT(txt);
+          ResponseTextDecompressed += txt;
+        END;
+        Json := ResponseTextDecompressed;
+      END;
+
+      LogAPICall(RequestTxt,EndPoint,Json,'POST');
+
+      IF STRPOS(Json,'error') = 0 THEN BEGIN
+        JsonMgt.ReadJSon(Json,TempDataExchField);
+        ResultCode := JsonMgt.GetJsonValue(TempDataExchField,'action.result_code');
+        IF ResultCode = 'SUCCESS' THEN BEGIN
+          EFTTransactionResponse."Amount Reversed" += PaymentAmount;
+          EFTTransactionResponse.MODIFY;
+        END;
+      END;
+
+      COMMIT;
+
+      //GlobalPayJsonManagement.ReadJSon(Json,TempDataExchField);
+      //TestJsonInTable(Json,TempDataExchField);
+      EXIT(FORMAT(Json));
+    END;
+
+    PROCEDURE GetTransaction@1000000012(VAR GlobalPayAPISetupLine@1000000003 : Record 50001;EFTTransactionResponse@1000000006 : Record 50004) : Text;
+    VAR
+      GlobalPayJsonManagement@1000000000 : Codeunit 50021;
+      EndPoint@1000000001 : Text;
+      RequestTxt@1000000002 : Text;
+      TempDataExchField@1000000013 : TEMPORARY Record 1221;
+      AccessToken@1000000004 : Text;
+      DecompressionGzipStream@1000000017 : DotNet "'System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.IO.Compression.GZipStream";
+      TempBlob@1000000016 : Record 99008535;
+      OutStr@1000000015 : OutStream;
+      InStr@1000000014 : InStream;
+      CompressionMode@1000000012 : DotNet "'System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.IO.Compression.CompressionMode";
+      ResponseTextDecompressed@1000000011 : Text;
+      MyFile@1000000010 : File;
+      txt@1000000009 : Text;
+      FileManagement@1000000005 : Codeunit 419;
+      StartEndDate@1000000007 : Text;
+    BEGIN
+      AccessToken := GetAccessToken(GlobalPayAPISetupLine);
+
+      GetAPISetup(GlobalPayAPISetupLine."Pos Terminal No.");
+
+      StartEndDate := COPYSTR(EFTTransactionResponse."Time Created",1,10);
+      EndPoint := STRSUBSTNO(GlobalPayAPISetup."Get Transaction API URL",EFTTransactionResponse."GP Transaction Id",EFTTransactionResponse."Account Name",StartEndDate,StartEndDate);
+      GlobalPayJsonManagement.UploadJSon(EndPoint,AccessToken,Json,'GET',GlobalPayAPISetup."X-GP-Version");
+
+      IF FileManagement.ServerFileExists(Json) THEN BEGIN //if response was gzip compressed, we saved it to temp. file and we need to decompress it. Json contains the temp. file path in this case
+        TempBlob.Blob.CREATEOUTSTREAM(OutStr);
+        MyFile.OPEN(Json);
+        MyFile.CREATEINSTREAM(InStr);
+        DecompressionGzipStream := DecompressionGzipStream.GZipStream(InStr,CompressionMode.Decompress);
+        DecompressionGzipStream.CopyTo(OutStr);
+        TempBlob.Blob.CREATEINSTREAM(InStr,TEXTENCODING::UTF8);
+        WHILE NOT InStr.EOS DO BEGIN
+          InStr.READTEXT(txt);
+          ResponseTextDecompressed += txt;
+        END;
+        Json := ResponseTextDecompressed;
+      END;
+
+      LogAPICall(RequestTxt,EndPoint,Json,'GET');
+
+      COMMIT;
+
+      // GlobalPayJsonManagement.ReadJSon(Json,TempDataExchField);
+      // TestJsonInTable(Json,TempDataExchField);
+      EXIT(FORMAT(Json));
+    END;
+
+    LOCAL PROCEDURE HideTrackDataInJsonRequest@1000000014(JsonRequestWithTrackDataTxt@1000000000 : Text) : Text;
+    VAR
+      JsonObj@1000000001 : DotNet "'Newtonsoft.Json, Version=6.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed'.Newtonsoft.Json.Linq.JObject";
+      JsonToken@1000000002 : DotNet "'Newtonsoft.Json, Version=6.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed'.Newtonsoft.Json.JsonToken";
+      JsonValue@1000000003 : DotNet "'Newtonsoft.Json, Version=6.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed'.Newtonsoft.Json.Linq.JValue";
+      TestTxt@1000000004 : Text;
+    BEGIN
+      JsonObj := JsonObj.Parse(JsonRequestWithTrackDataTxt);
+      JsonToken := JsonObj.SelectToken('payment_method.card.track');
+      IF JsonToken.ToString <> '' THEN BEGIN
+        JsonValue := JsonToken;
+        JsonValue.Value := '***information redacted***';
+      END;
+
+      EXIT(JsonObj.ToString);
+    END;
+
+    LOCAL PROCEDURE HideCardNoInJsonRequest@1000000028(JsonRequestWithTrackDataTxt@1000000000 : Text) : Text;
+    VAR
+      JsonObj@1000000001 : DotNet "'Newtonsoft.Json, Version=6.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed'.Newtonsoft.Json.Linq.JObject";
+      JsonToken@1000000002 : DotNet "'Newtonsoft.Json, Version=6.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed'.Newtonsoft.Json.JsonToken";
+      JsonValue@1000000003 : DotNet "'Newtonsoft.Json, Version=6.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed'.Newtonsoft.Json.Linq.JValue";
+      TestTxt@1000000004 : Text;
+      CardNoFromJsonRequest@1000000005 : Text;
+      i@1000000006 : Integer;
+    BEGIN
+      JsonObj := JsonObj.Parse(JsonRequestWithTrackDataTxt);
+      JsonToken := JsonObj.SelectToken('payment_method.card.number');
+      CardNoFromJsonRequest := JsonToken.ToString;
+      IF CardNoFromJsonRequest <> '' THEN BEGIN
+        FOR i := 1 TO (STRLEN(CardNoFromJsonRequest) - 4) DO //keep only last 4 digits
+          CardNoFromJsonRequest[i] := 'X';
+
+        JsonValue := JsonToken;
+        JsonValue.Value := CardNoFromJsonRequest;
+      END;
+
+      EXIT(JsonObj.ToString);
+    END;
+
+    LOCAL PROCEDURE TestJsonInTable@7(Json@1000 : DotNet "'mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.String";VAR TempDataExchField@1005 : TEMPORARY Record 1221);
+    VAR
+      XmlFile@1004 : File;
+      XmlStream@1003 : OutStream;
+      JsonText@1002 : Text;
+      ExporDataExchangeToTxt@1001 : XMLport 50000;
+      GlobalPayJsonManagement@1006 : Codeunit 50021;
+    BEGIN
+      //for testing the content of TEMP DATA EXCHANGE FIELD record (filled with data from JSON response)
+      IF Json.Equals('') THEN
+        Json := '{' +
+        '"attributes": {' +
+        '"inserted_at": "string",' +
+        '"listing_wmid": 0,' +
+        '"updated_at": "string"' +
+        '},' +
+        '"id": "adb8840e-2c4c-4ead-b2d7-43e4dbc9115a",' +
+        '"links": {},' +
+        '"relationships": {' +
+          '"catalog_items": {' +
+            '"data": [' +
+            '{' +
+              '"id": "string",' +
+             ' "type": "string"' +
+            '}' +
+          '],' +
+          '"links": {' +
+          '"related": "string",' +
+          '"self": "string"' +
+          '}' +
+        '},' +
+        '"organization": {' +
+        '"data": {' +
+        '"id": "5018582e-367c-4bd9-89ec-f134e4c07fdc",' +
+        '"type": "organizations"' +
+        '},' +
+          '"links": {' +
+          '"related": "string",' +
+          '"self": "string"' +
+          '}' +
+        '}' +
+       '},' +
+        '"type": "string"' +
+      '}';
+
+      GlobalPayJsonManagement.ReadJSon(Json,TempDataExchField);
+
+      TempDataExchField.SETCURRENTKEY("Line No.","Column No.");
+
+      XmlFile.CREATE('C:\Users\andrei.lungu\Desktop\RemovedData\Online Payment\DebugAndrei.txt');
+      XmlFile.CREATEOUTSTREAM(XmlStream);
+
+      ExporDataExchangeToTxt.InsertTempTable(TempDataExchField);
+
+      ExporDataExchangeToTxt.SETDESTINATION(XmlStream);;
+      ExporDataExchangeToTxt.EXPORT;
+
+      XmlFile.CLOSE;
+    END;
+
+    PROCEDURE GetAPISetup@1000000051(PosTerminalNo@1000000000 : Code[20]);
+    BEGIN
+      IF GlobalPaySetupRetrieved THEN
+        EXIT;
+
+      GlobalPayAPISetup.GET(PosTerminalNo);
+      GlobalPayAPISetup.TESTFIELD("API Active");
+      GlobalPaySetupRetrieved := TRUE;
+    END;
+
+    PROCEDURE SetPaymentAmount@1000000004(pPaymentAmount@1000000000 : Decimal);
+    BEGIN
+      PaymentAmount := pPaymentAmount;
+    END;
+
+    PROCEDURE SetCurrency@1000000005(pCurrency@1000000000 : Code[10]);
+    BEGIN
+      Currency := pCurrency;
+    END;
+
+    PROCEDURE SetReference@1000000006(pReference@1000000000 : Text[50]);
+    BEGIN
+      Reference := pReference;
+    END;
+
+    PROCEDURE SetCardNo@1000000007(pCardNo@1000000000 : Text[30]);
+    BEGIN
+      CardNo := pCardNo;
+    END;
+
+    PROCEDURE SetExpiryMonth@1000000008(pExpiryMonth@1000000000 : Text[2]);
+    BEGIN
+      ExpiryMonth := pExpiryMonth;
+    END;
+
+    PROCEDURE SetExpiryYear@1000000009(pExpiryYear@1000000000 : Text[2]);
+    BEGIN
+      ExpiryYear := pExpiryYear;
+    END;
+
+    PROCEDURE SetCardTrack@1000000013(pCardTrack@1000000000 : Text);
+    BEGIN
+      CardTrack := pCardTrack;
+    END;
+
+    PROCEDURE GetRequestJson@1000000002() : Text;
+    VAR
+      RequestTxt@1000000000 : Text;
+    BEGIN
+      RequestTxt := Json;
+      EXIT(RequestTxt);
+    END;
+
+    BEGIN
+    END.
+  }
+}
+
+OBJECT Codeunit 50021 GlobalPay Json Management
+{
+  OBJECT-PROPERTIES
+  {
+    Date=02/26/20;
+    Time=[ 1:52:08 PM];
+    Modified=Yes;
+    Version List=TASK_ID_REMOVED;
+  }
+  PROPERTIES
+  {
+    OnRun=BEGIN
+          END;
+
+  }
+  CODE
+  {
+    VAR
+      StringBuilder@1002 : DotNet "'mscorlib'.System.Text.StringBuilder";
+      StringWriter@1004 : DotNet "'mscorlib'.System.IO.StringWriter";
+      StringReader@1003 : DotNet "'mscorlib'.System.IO.StringReader";
+      JsonTextWriter@1006 : DotNet "'Newtonsoft.Json, Version=6.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed'.Newtonsoft.Json.JsonTextWriter";
+      JsonTextReader@1001 : DotNet "'Newtonsoft.Json, Version=6.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed'.Newtonsoft.Json.JsonTextReader";
+      ActiveSecurityProtocol@1000 : DotNet "'System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Net.SecurityProtocolType";
+      SecurityProtocolType@1007 : DotNet "'System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Net.SecurityProtocolType";
+      ServicePointManager@1005 : DotNet "'System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Net.ServicePointManager";
+
+    LOCAL PROCEDURE Initialize@15();
+    VAR
+      Formatting@1000 : DotNet "'Newtonsoft.Json, Version=6.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed'.Newtonsoft.Json.Formatting";
+    BEGIN
+      StringBuilder := StringBuilder.StringBuilder;
+      StringWriter := StringWriter.StringWriter(StringBuilder);
+      JsonTextWriter := JsonTextWriter.JsonTextWriter(StringWriter);
+      JsonTextWriter.Formatting := Formatting.Indented;
+    END;
+
+    PROCEDURE StartJSon@1();
+    BEGIN
+      IF ISNULL(StringBuilder) THEN
+        Initialize;
+      JsonTextWriter.WriteStartObject;
+    END;
+
+    PROCEDURE StartJSonArray@14(PropertyName@1000 : Text);
+    BEGIN
+      IF ISNULL(StringBuilder) THEN
+        Initialize;
+      JsonTextWriter.WritePropertyName(PropertyName);
+      JsonTextWriter.WriteStartArray;
+    END;
+
+    PROCEDURE AddJSonBranch@6(BranchName@1001 : Text);
+    BEGIN
+      JsonTextWriter.WritePropertyName(BranchName);
+      JsonTextWriter.WriteStartObject;
+    END;
+
+    PROCEDURE AddToJSon@4(VariableName@1001 : Text;Variable@1002 : Variant);
+    BEGIN
+      JsonTextWriter.WritePropertyName(VariableName);
+      JsonTextWriter.WriteValue(FORMAT(Variable,0,9));
+    END;
+
+    PROCEDURE AddToJSonDecimal@17(VariableName@1001 : Text;Variable@1002 : Variant);
+    VAR
+      Decimal@1000 : Decimal;
+    BEGIN
+      CASE TRUE OF
+      Variable.ISINTEGER,Variable.ISDECIMAL:
+      Decimal := Variable;
+      ELSE
+      EVALUATE(Decimal,Variable);
+      END;
+      JsonTextWriter.WritePropertyName(VariableName);
+      JsonTextWriter.WriteValue(Decimal);
+    END;
+
+    PROCEDURE AddToJSonBoolean@22(VariableName@1001 : Text;Variable@1002 : Variant);
+    VAR
+      Boolean@1000 : Boolean;
+    BEGIN
+      CASE TRUE OF
+      Variable.ISBOOLEAN:
+      Boolean := Variable;
+      ELSE
+      EVALUATE(Boolean,Variable);
+      END;
+      JsonTextWriter.WritePropertyName(VariableName);
+      JsonTextWriter.WriteValue(Boolean);
+    END;
+
+    PROCEDURE EndJSonBranch@7();
+    BEGIN
+      JsonTextWriter.WriteEndObject;
+    END;
+
+    PROCEDURE EndJSonArray@19();
+    BEGIN
+      JsonTextWriter.WriteEndArray;
+    END;
+
+    PROCEDURE EndJSon@3();
+    BEGIN
+      JsonTextWriter.WriteEndObject;
+    END;
+
+    PROCEDURE GetJSon@20() JSon : Text;
+    BEGIN
+      JSon := StringBuilder.ToString;
+      Initialize;
+    END;
+
+    PROCEDURE ReadJSon@5(VAR String@1000 : DotNet "'mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.String";VAR TempPostingExchField@1002 : TEMPORARY Record 1221);
+    VAR
+      JsonToken@1001 : DotNet "'Newtonsoft.Json, Version=6.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed'.Newtonsoft.Json.JsonToken";
+      PrefixArray@1006 : DotNet "'mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Array";
+      PrefixString@1005 : DotNet "'mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.String";
+      PropertyName@1008 : Text;
+      ColumnNo@1003 : Integer;
+      InArray@1007 : ARRAY [250] OF Boolean;
+    BEGIN
+      PrefixArray := PrefixArray.CreateInstance(GETDOTNETTYPE(String),250);
+      StringReader := StringReader.StringReader(String);
+      JsonTextReader := JsonTextReader.JsonTextReader(StringReader);
+      WHILE JsonTextReader.Read DO
+        CASE TRUE OF
+          JsonTextReader.TokenType.CompareTo(JsonToken.StartObject) = 0 :
+            ;
+          JsonTextReader.TokenType.CompareTo(JsonToken.StartArray) = 0 :
+            BEGIN
+              InArray[JsonTextReader.Depth + 1] := TRUE;
+              ColumnNo := 0;
+            END;
+          JsonTextReader.TokenType.CompareTo(JsonToken.StartConstructor) = 0 :
+            ;
+          JsonTextReader.TokenType.CompareTo(JsonToken.PropertyName) = 0 :
+            BEGIN
+              PrefixArray.SetValue(JsonTextReader.Value,JsonTextReader.Depth - 1);
+              IF JsonTextReader.Depth > 1 THEN BEGIN
+                PrefixString := PrefixString.Join('.',PrefixArray,0,JsonTextReader.Depth - 1);
+                IF PrefixString.Length > 0 THEN
+                  PropertyName := PrefixString.ToString + '.' + FORMAT(JsonTextReader.Value,0,9)
+                ELSE
+                  PropertyName := FORMAT(JsonTextReader.Value,0,9);
+              END ELSE
+                PropertyName := FORMAT(JsonTextReader.Value,0,9);
+            END;
+          JsonTextReader.TokenType.CompareTo(JsonToken.String) = 0 ,
+          JsonTextReader.TokenType.CompareTo(JsonToken.Integer) = 0 ,
+          JsonTextReader.TokenType.CompareTo(JsonToken.Float) = 0 ,
+          JsonTextReader.TokenType.CompareTo(JsonToken.Boolean) = 0 ,
+          JsonTextReader.TokenType.CompareTo(JsonToken.Date) = 0 ,
+          JsonTextReader.TokenType.CompareTo(JsonToken.Bytes) = 0 :
+            BEGIN
+              TempPostingExchField."Data Exch. No." := JsonTextReader.Depth;
+              TempPostingExchField."Line No." := JsonTextReader.LineNumber;
+              TempPostingExchField."Column No." := ColumnNo;
+              TempPostingExchField."Node ID" := PropertyName;
+              // 18190 TempPostingExchField.Value := FORMAT(JsonTextReader.Value,0,9);
+              TempPostingExchField.Value := COPYSTR(FORMAT(JsonTextReader.Value,0,9),1,250); // 18190: description of products is too long
+              TempPostingExchField."Data Exch. Line Def Code" := JsonTextReader.TokenType.ToString;
+              IF TempPostingExchField.INSERT THEN;
+            END;
+          JsonTextReader.TokenType.CompareTo(JsonToken.EndConstructor) = 0 :
+            ;
+          JsonTextReader.TokenType.CompareTo(JsonToken.EndArray) = 0 :
+            InArray[JsonTextReader.Depth + 1] := FALSE;
+          JsonTextReader.TokenType.CompareTo(JsonToken.EndObject) = 0 :
+            IF JsonTextReader.Depth > 0 THEN
+              IF InArray[JsonTextReader.Depth] THEN ColumnNo += 1;
+        END;
+    END;
+
+    PROCEDURE ReadFirstJSonValue@10000200(VAR String@10000200 : DotNet "'mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.String";ParameterName@10000201 : Text) ParameterValue : Text;
+    VAR
+      JsonToken@10000203 : DotNet "'Newtonsoft.Json, Version=6.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed'.Newtonsoft.Json.JsonToken";
+      PropertyName@10000202 : Text;
+    BEGIN
+      StringReader := StringReader.StringReader(String);
+      JsonTextReader := JsonTextReader.JsonTextReader(StringReader);
+      WHILE JsonTextReader.Read DO
+        CASE TRUE OF
+          JsonTextReader.TokenType.CompareTo(JsonToken.PropertyName) = 0 :
+            PropertyName := FORMAT(JsonTextReader.Value,0,9);
+          (PropertyName = ParameterName) AND NOT ISNULL(JsonTextReader.Value)  :
+            BEGIN
+              ParameterValue := FORMAT(JsonTextReader.Value,0,9);
+              EXIT;
+            END;
+        END;
+    END;
+
+    PROCEDURE DownloadString@10(Url@1001 : Text;UserName@1003 : Text;Password@1004 : Text) : Text;
+    VAR
+      WebClient@1000 : DotNet "'System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Net.WebClient";
+      Credential@1002 : DotNet "'System, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Net.NetworkCredential";
+    BEGIN
+      Credential := Credential.NetworkCredential;
+      Credential.UserName := UserName;
+      Credential.Password := Password;
+
+      WebClient := WebClient.WebClient;
+      WebClient.Credentials := Credential;
+      EXIT(WebClient.DownloadString(Url));
+    END;
+
+    PROCEDURE CreateWebRequest@13(VAR HttpWebRequest@1000 : DotNet "'System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Net.HttpWebRequest";WebServiceURL@1002 : Text;Method@1001 : Text;Token@1003 : Text;APIVersion@1000000000 : Text);
+    BEGIN
+      HttpWebRequest := HttpWebRequest.Create(WebServiceURL);
+      HttpWebRequest.Timeout := 30000;
+      HttpWebRequest.Method := Method;
+      IF STRPOS(LOWERCASE(WebServiceURL),'/accesstoken') > 0 THEN BEGIN
+        HttpWebRequest.Accept := 'application/json';
+        HttpWebRequest.ContentType := 'application/json';
+        HttpWebRequest.Headers.Add('X-GP-Version',APIVersion);
+        HttpWebRequest.Headers.Add('Accept-Encoding','gzip');
+      END ELSE BEGIN
+        HttpWebRequest.Accept := 'application/json';
+        HttpWebRequest.ContentType := 'application/json';
+        HttpWebRequest.Headers.Add('X-GP-Version',APIVersion);
+        HttpWebRequest.Headers.Add('Accept-Encoding','gzip');
+        HttpWebRequest.Headers.Add('Authorization','Bearer ' + Token); //GlobalPay API TOKEN
+      END;
+    END;
+
+    PROCEDURE CreateCredentials@16(VAR HttpWebRequest@1001 : DotNet "'System, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Net.HttpWebRequest";Token@1002 : Text);
+    VAR
+      Credential@1000 : DotNet "'System, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Net.NetworkCredential";
+    BEGIN
+      // Credential := Credential.NetworkCredential;
+      // Credential.UserName := UserName;
+      // Credential.Password := Password;
+      // HttpWebRequest.Credentials := Credential;
+      //HttpWebRequest.Headers.Add('Authorization','Bearer ' + Token);
+    END;
+
+    PROCEDURE SetRequestStream@18(VAR HttpWebRequest@1000 : DotNet "'System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Net.HttpWebRequest";VAR String@1013 : DotNet "'mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.String");
+    VAR
+      StreamWriter@1003 : DotNet "'mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.IO.StreamWriter";
+      Encoding@1004 : DotNet "'mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Text.Encoding";
+    BEGIN
+      StreamWriter := StreamWriter.StreamWriter(HttpWebRequest.GetRequestStream,Encoding.GetEncoding('iso8859-1'));
+      StreamWriter.Write(String);
+      StreamWriter.Close;
+    END;
+
+    PROCEDURE GetResponseStream@23(VAR HttpWebResponse@1000 : DotNet "'System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Net.WebResponse";VAR String@1013 : DotNet "'mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.String");
+    VAR
+      StreamReader@1011 : DotNet "'mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.IO.StreamReader";
+      MemoryStream@1001 : DotNet "'mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.IO.MemoryStream";
+      MyFile@1000000000 : File;
+      OutStr@1000000001 : OutStream;
+      FileManagement@1000000002 : Codeunit 419;
+      TempFileName@1000000003 : Text;
+    BEGIN
+      IF HttpWebResponse.Headers.Get('Content-Encoding') = 'gzip' THEN BEGIN
+        MemoryStream := HttpWebResponse.GetResponseStream;
+        TempFileName := FileManagement.ServerTempFileName('gzip');
+        MyFile.CREATE(TempFileName);
+        MyFile.TEXTMODE(FALSE);
+        MyFile.CREATEOUTSTREAM(OutStr);
+        MemoryStream.CopyTo(OutStr);
+        String := TempFileName; //Temporary File Path
+      END ELSE BEGIN
+        StreamReader := StreamReader.StreamReader(HttpWebResponse.GetResponseStream);
+        String := StreamReader.ReadToEnd;
+      END;
+    END;
+
+    PROCEDURE GetValueFromJsonString@9(VAR String@1001 : DotNet "'mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.String";ParameterName@1002 : Text) : Text;
+    VAR
+      TempPostingExchField@1000 : TEMPORARY Record 1221;
+    BEGIN
+      ReadJSon(String,TempPostingExchField);
+      EXIT(GetJsonValue(TempPostingExchField,ParameterName));
+    END;
+
+    PROCEDURE GetJsonValue@12(VAR TempPostingExchField@1001 : TEMPORARY Record 1221;ParameterName@1000 : Text) : Text;
+    BEGIN
+      WITH TempPostingExchField DO BEGIN
+        SETRANGE("Node ID",ParameterName);
+        IF FINDFIRST THEN EXIT(Value);
+      END;
+    END;
+
+    PROCEDURE AddToJSonArrayValue@1000000000(Variable@1002 : Variant);
+    BEGIN
+      JsonTextWriter.WriteValue(FORMAT(Variable,0,9));
+    END;
+
+    PROCEDURE GetJSon1@11() JSon : Text;
+    BEGIN
+      JSon := StringBuilder.ToString;
+    END;
+
+    PROCEDURE UploadJSon@8(WebServiceURL@1002 : Text;Token@1000 : Text;VAR String@1013 : DotNet "'mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.String";Method@1001 : Text;APIVersion@1000000000 : Text);
+    VAR
+      HttpWebRequest@1007 : DotNet "'System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Net.HttpWebRequest";
+      HttpWebResponse@1006 : DotNet "'System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Net.WebResponse";
+    BEGIN
+      ActiveSecurityProtocol := ServicePointManager.SecurityProtocol;
+      ServicePointManager.SecurityProtocol := SecurityProtocolType.Tls12;
+      CreateWebRequest(HttpWebRequest,WebServiceURL,Method,Token,APIVersion);
+      //CreateCredentials(HttpWebRequest,Token);
+      IF Method <> 'GET' THEN
+        SetRequestStream(HttpWebRequest,String);
+      DoWebRequest(HttpWebRequest,HttpWebResponse,'');
+      GetResponseStream(HttpWebResponse,String);
+    END;
+
+    PROCEDURE DoWebRequest@21(VAR HttpWebRequest@1007 : DotNet "'System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Net.HttpWebRequest";VAR HttpWebResponse@1004 : DotNet "'System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Net.WebResponse";IgnoreCode@1000 : Code[10]);
+    VAR
+      NAVWebRequest@1006 : DotNet "'NAVWebRequest, Version=1.0.0.0, Culture=neutral, PublicKeyToken=f53f0925d26e1382'.NAVWebRequest.NAVWebRequest";
+      HttpWebException@1005 : DotNet "'System, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Net.WebException";
+      HttpWebRequestError@1002 : TextConst 'ENU=Error: %1\%2;ISL=St”Ðuvilla: %1\%2';
+      StreamReader@1200070010 : DotNet "'mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.IO.StreamReader";
+    BEGIN
+      NAVWebRequest := NAVWebRequest.NAVWebRequest;
+      IF NOT NAVWebRequest.doRequest(HttpWebRequest,HttpWebException,HttpWebResponse) THEN BEGIN
+        ServicePointManager.SecurityProtocol := ActiveSecurityProtocol;
+        IF (IgnoreCode = '') OR (STRPOS(HttpWebException.Message,IgnoreCode) = 0) THEN
+          //al ERROR(HttpWebRequestError,HttpWebException.Status.ToString,HttpWebException.Message);
+          HttpWebResponse := HttpWebException.Response; //al
+      END;
+      ServicePointManager.SecurityProtocol := ActiveSecurityProtocol;
+    END;
+
+    PROCEDURE AddToJSonInteger@2(VariableName@1001 : Text;Variable@1002 : Variant);
+    VAR
+      Integer@1000 : Integer;
+    BEGIN
+      CASE TRUE OF
+        Variable.ISINTEGER,Variable.ISDECIMAL:
+        Integer := Variable;
+      ELSE
+        EVALUATE(Integer,Variable);
+      END;
+      JsonTextWriter.WritePropertyName(VariableName);
+      JsonTextWriter.WriteValue(Integer);
+    END;
+
+    BEGIN
+    END.
+  }
+}
+
+OBJECT Codeunit 50022 GlobalPay POS Post Utility
+{
+  OBJECT-PROPERTIES
+  {
+    Date=03/12/20;
+    Time=[ 5:21:53 PM];
+    Modified=Yes;
+    Version List=TASK_ID_REMOVED;
+  }
+  PROPERTIES
+  {
+    OnRun=BEGIN
+          END;
+
+  }
+  CODE
+  {
+
+    PROCEDURE InsertEFTCardEntry@1000000000(Transaction@1000000000 : Record 99001472;TransPaymentEntry@1000000002 : Record 99001474);
+    VAR
+      EFTTransactionResponse@1000000003 : Record 50004;
+      POSCardEntry@1000000004 : Record 99008987;
+    BEGIN
+      // used when pos payment is posted
+      EFTTransactionResponse.SETRANGE("Pos Entry Receipt No.",TransPaymentEntry."Receipt No.");
+      EFTTransactionResponse.SETRANGE("Pos Entry Line No",TransPaymentEntry."Line No.");
+      EFTTransactionResponse.SETRANGE(Status,EFTTransactionResponse.Status::New);
+      IF EFTTransactionResponse.ISEMPTY THEN
+        EXIT;
+
+      EFTTransactionResponse.FINDFIRST;
+
+      POSCardEntry.INIT;
+      POSCardEntry."Store No." := TransPaymentEntry."Store No.";
+      POSCardEntry."POS Terminal No."  := TransPaymentEntry."POS Terminal No.";
+      POSCardEntry."Receipt No." := TransPaymentEntry."Receipt No.";
+      POSCardEntry."Line No." := TransPaymentEntry."Line No.";
+      POSCardEntry."Entry No." := CardEntryNextEntryNo(TransPaymentEntry."Store No.",TransPaymentEntry."POS Terminal No.");
+      POSCardEntry."Transaction No." := TransPaymentEntry."Transaction No.";
+      POSCardEntry.Amount := EFTTransactionResponse.Amount;
+      POSCardEntry.Date := Transaction."Original Date";
+      POSCardEntry.Time := Transaction.Time;
+      POSCardEntry."Auth.code" := COPYSTR(EFTTransactionResponse."Auth. Code",1,MAXSTRLEN(POSCardEntry."Auth.code"));
+      POSCardEntry."EFT Batch No." := COPYSTR(EFTTransactionResponse."Batch Id",1,MAXSTRLEN(POSCardEntry."EFT Batch No."));
+      POSCardEntry."EFT POS Terminal No." := EFTTransactionResponse."Pos Terminal No";
+      POSCardEntry."EFT Store No." := EFTTransactionResponse."Store No.";
+      POSCardEntry."EFT Merchant No." := COPYSTR(EFTTransactionResponse."Merchant Id",1,MAXSTRLEN(POSCardEntry."EFT Merchant No."));
+      POSCardEntry."Tender Type" := EFTTransactionResponse."Tender Type";
+
+      CASE EFTTransactionResponse.Type OF
+        'SALE' : POSCardEntry."Transaction Type" := POSCardEntry."Transaction Type"::Sale;
+        'REFUND' : POSCardEntry."Transaction Type" := POSCardEntry."Transaction Type"::Refund;
+      END;
+
+      CASE EFTTransactionResponse."Card Brand" OF
+        'AMEX' : POSCardEntry."Card Type" := 'AmExpress';
+        'MASTERCARD' : POSCardEntry."Card Type" := 'MastCard';
+        'MC' : POSCardEntry."Card Type" := 'MastCard';
+        'DINERS' : POSCardEntry."Card Type" := 'Diners';
+        'VISA' : POSCardEntry."Card Type" := 'Visa';
+        'DISCOVER' : POSCardEntry."Card Type" := 'Discover';
+        'DISC' : POSCardEntry."Card Type" := 'Discover';
+        'JCB' : POSCardEntry."Card Type" := 'Jcb';
+        ELSE
+          POSCardEntry."Card Type" := 'Unknown';
+      END;
+      POSCardEntry."Card Number" := EFTTransactionResponse."Card No.";
+      POSCardEntry."Expiry Date" := EFTTransactionResponse."Expiry Date";
+
+      POSCardEntry."EFT Trans. Date" := COPYSTR(EFTTransactionResponse."Time Created",1,10);
+      POSCardEntry."EFT Trans. Time" := COPYSTR(EFTTransactionResponse."Time Created",12,STRLEN(EFTTransactionResponse."Time Created") - 12 + 1);
+      POSCardEntry."EFT Trans. No." := COPYSTR(EFTTransactionResponse."GP Transaction Id",1,40);
+      POSCardEntry.Message := EFTTransactionResponse."Result Code";
+      IF EFTTransactionResponse."Pay. Meth. Entry Mode" = 'SWIPE' THEN
+        POSCardEntry."MSR input" := TRUE;
+      IF EFTTransactionResponse."Paymentod Method Message" = 'APPROVAL' THEN
+        POSCardEntry."Authorisation Ok" := TRUE;
+
+      POSCardEntry.INSERT(TRUE);
+
+      //modify EFT Transaction Response
+      EFTTransactionResponse.Status := EFTTransactionResponse.Status::Posted;
+      EFTTransactionResponse."Transaction No" := TransPaymentEntry."Transaction No.";
+      EFTTransactionResponse.MODIFY;
+    END;
+
+    PROCEDURE CardEntryNextEntryNo@23(PosStoreNo@1000000000 : Code[10];PosTerminalNo@1000000001 : Code[10]) : Integer;
+    VAR
+      CardEntry@1000 : Record 99008987;
+    BEGIN
+      //NextEntryNo
+      CardEntry.SETRANGE("Store No.",PosStoreNo);
+      CardEntry.SETRANGE("POS Terminal No.",PosTerminalNo);
+      IF CardEntry.FINDLAST THEN
+        EXIT(CardEntry."Entry No." + 1)
+      ELSE
+        EXIT(1);
+    END;
+
+    BEGIN
+    END.
+  }
+}
+
+OBJECT Codeunit 50023 GlobalPay POS Commands
+{
+  OBJECT-PROPERTIES
+  {
+    Date=03/11/20;
+    Time=[ 9:25:38 AM];
+    Modified=Yes;
+    Version List=TASK_ID_REMOVED;
+  }
+  PROPERTIES
+  {
+    SingleInstance=Yes;
+    OnRun=BEGIN
+          END;
+
+  }
+  CODE
+  {
+    VAR
+      POSTrans@1000000000 : Record 99008980;
+      POSSESSION@1000000001 : Codeunit 99008919;
+      EFTPosCommandsMsg@1000000008 : TextConst 'ENU=EFT POS Commands';
+      EFTSetupIncompleteErr@1000000007 : TextConst 'ENU=EFT Setup incomplete';
+      AmountNumpadTxt@1000000006 : TextConst 'ENU=Amount';
+      TenderTypeCannotBeUsedErr@1000000005 : TextConst 'ENU=This Tender Type may not be used';
+      InvalidAmountErr@1000000004 : TextConst 'ENU=Invalid value in amount';
+      ProcessPaymentErr@1000000003 : TextConst 'ENU=An error occured while processing the payment.\Error Code: %1\Detailed Error Code: %2\Description: %3';
+      ProcessRefundErr@1000000002 : TextConst 'ENU=An error occured while processing the refund of the payment.\Error Code: %1\Detailed Error Code: %2\Description: %3';
+      Balance@1000000009 : Decimal;
+      NewLine@1000000012 : Record 99008981;
+      PosTransUtil@1000000011 : Codeunit 99001570;
+      POSGUI@1000000010 : Codeunit 99001575;
+      CardOffLine@1000000014 : Boolean;
+      Text234@1000000015 : TextConst 'ENU=Card no.';
+      CurrInput@1000000016 : Text;
+      Text109@1000000017 : TextConst 'ENU=Enter card number';
+      PaymentAmount@1000000018 : Decimal;
+      CardPhase@1000000019 : Integer;
+      EFTCardNumber@1000000013 : Text[30];
+      Text237@1000000020 : TextConst 'ENU=Date DDMM';
+      Text120@1000000021 : TextConst 'ENU=Date must be entered as 4 digits';
+      EFTCardExpDate@1000000022 : Text;
+      EnterCVVText@1000000023 : TextConst 'ENU=CVV';
+      EFTText028@1000000025 : TextConst 'ENU=Invalid input';
+      EFTText033@1000000024 : TextConst 'ENU=Enter Card Verification Value';
+      EFTCVV@1000000026 : Integer;
+      EFTCardTrack@1000000041 : Text;
+      TenderType@1000000027 : Record 99001462;
+      ExpMonthErr@1000000028 : TextConst 'ENU=Incorrect Expiration Month.';
+      CardExpiredErr@1000000029 : TextConst 'ENU=Card is Expired.';
+      GlobalPayAPIMgmt@1000000030 : Codeunit 50020;
+      PosTerminal@1000000031 : Record 99001471;
+      CreateTransGlobalPayAPISetupLine@1000000032 : Record 50001;
+      ProcessPaymentErr2@1000000033 : TextConst 'ENU=An error occured while processing the payment.\Status: %1\ Action Result Code: %2\Payment Method Message: %3';
+      ProcessReverseErr@1000000034 : TextConst 'ENU=An error occured while processing the reversal of the payment.\Error Code: %1\Detailed Error Code: %2\Description: %3';
+      GlobalPayAPISetupChecked@1000000035 : Boolean;
+      CreateTransGlobalPayAPISetupLineRetrieved@1000000036 : Boolean;
+      ProcessReverseErr2@1000000037 : TextConst 'ENU=An error occured while processing the reversal of the payment.\Action Result Code: %1\Payment Method Message: %2';
+      ConfirmCardNoVoidTxt@1000000038 : TextConst 'ENU=Confirm card number for void:';
+      ConfirmCardNoRefundTxt@1000000039 : TextConst 'ENU=Confirm card number for refund:';
+      GlobalPayAPISetup@1000000040 : Record 50000;
+      ShipeCardTxt@1000000042 : TextConst 'ENU=Swipe Card';
+      BadTrackDataRetryManualConfirm@1000000043 : TextConst 'ENU=Bad Track data. Do you want to Retry by entering manually the Card No. and Expiration Date?';
+
+    PROCEDURE TenderKeyEFTPressed@1000000007(POSMenuLine@1000000003 : Record 99008906;POSTransaction@1000000001 : Record 99008980;TenderAmountText@1000000002 : Text);
+    VAR
+      POSTransCU@1000000004 : Codeunit 99001570;
+      PosFunc@1000000005 : Codeunit 99008900;
+      StoreSetup@1000000008 : Record 99001470;
+      JsonString@1000000010 : Text;
+      SuccessResponse@1000000011 : Boolean;
+      EFTPanel@1000000014 : Codeunit 50005;
+    BEGIN
+      POSTrans := POSTransaction;
+
+      CheckGlobalPayAPISetup;
+      GetCreateTransGlobalPayApiSetupLine;
+
+      StoreSetup.GET(PosTerminal."Store No.");
+      TenderType.GET(StoreSetup."No.",POSMenuLine.Parameter);
+
+      CalcTotals;
+
+      IF NOT TenderType."May Be Used" THEN BEGIN
+        ErrorBeep(TenderTypeCannotBeUsedErr);
+        EXIT;
+      END;
+
+      //al
+      // IF TenderAmountText <> '' THEN
+      //  CurrInput := TenderAmountText
+      // ELSE BEGIN
+      //  PaymentAmount := PosFunc.RoundTender(TenderType,Balance);
+      //  CurrInput := POSTransCU.OpenNumericKeyboard(AmountNumpadTxt,0,PosFunc.FormatAmountToShow(PaymentAmount),'',1);
+      //  EXIT;
+      // END;
+      //
+      // IF NOT EVALUATE(PaymentAmount,CurrInput) THEN BEGIN
+      //  ErrorBeep(InvalidAmountErr);
+      //  EXIT;
+      // END;
+      //al
+
+      PaymentAmount := Balance;
+
+      CurrInput := '';
+      CLEAR(GlobalPayAPIMgmt);
+
+      PaymentAmount := PosFunc.RoundTender(TenderType,PaymentAmount);
+      PosFunc.AdjustAmount(PaymentAmount);
+
+      IF NOT POSTrans."Sale Is Return Sale" THEN BEGIN
+        IF NOT GlobalPayAPISetup."Use MSR Card Reader" THEN
+          GPAskForCard
+        ELSE
+          GPAskForSwipeCard;
+      END ELSE
+        NextCardPhase;
+    END;
+
+    LOCAL PROCEDURE CalcTotals@5();
+    BEGIN
+      POSTrans.CALCFIELDS("Gross Amount","Line Discount",Payment,"Net Amount","Total Discount","Income/Exp. Amount","Net Income/Exp. Amount",Prepayment);
+      Balance := POSTrans."Gross Amount" + POSTrans."Income/Exp. Amount" - POSTrans.Payment;
+    END;
+
+    LOCAL PROCEDURE InitNewLine@119();
+    VAR
+      MenuTypeRec@1100409000 : Record 10001221;
+    BEGIN
+      CLEAR(NewLine);
+      NewLine."Store No." := POSTrans."Store No.";
+      NewLine."POS Terminal No." := POSTrans."POS Terminal No.";
+      NewLine."Receipt No." := POSTrans."Receipt No.";
+    END;
+
+    PROCEDURE ErrorBeep@1100409001(Txt@1100409000 : Text[250]);
+    VAR
+      OposUtil@1000000000 : Codeunit 99008910;
+      POSGUI@1000000001 : Codeunit 99001575;
+    BEGIN
+      //ErrorBeep
+      OposUtil.Beeper;
+      OposUtil.Beeper;
+      POSGUI.PosMessage(Txt);
+    END;
+
+    LOCAL PROCEDURE InsertPaymentLine@1000000022(PaymentAmount@1000000000 : Decimal;TenderType@1000000001 : Record 99001462;CardType@1000000002 : Code[10]);
+    BEGIN
+      NewLine."Entry Type" := NewLine."Entry Type"::Payment;
+      IF NewLine.Quantity = 0 THEN
+        NewLine.Quantity := 1;
+
+      NewLine.VALIDATE(Amount,PaymentAmount);
+      NewLine."Net Amount" := NewLine.Amount;
+      NewLine."Created by Staff ID" := POSSESSION.StaffID;
+      NewLine.Description := TenderType.Description;
+      NewLine.Number := TenderType."No. in Transaction";
+      NewLine."Card Type" := CardType; //al
+
+      NewLine.InsertLine;
+    END;
+
+    PROCEDURE InsertEFTTransactionResponse@1000000001(VAR TempDataExchField@1000000000 : TEMPORARY Record 1221;PaymentAmount@1000000001 : Decimal;EFTTransactionResponseType@1000000005 : ' ,Payment,Reversal';POSTrans@1000000006 : Record 99008980;EFTTransactionResponseRefunded@1000000008 : Record 50004);
+    VAR
+      EFTTransactionResponse@1000000002 : Record 50004;
+      JSonMgt@1000000003 : Codeunit 50021;
+      NextEntryNo@1000000004 : Integer;
+    BEGIN
+      NextEntryNo := 1;
+      IF EFTTransactionResponse.FINDLAST THEN
+        NextEntryNo := EFTTransactionResponse."Entry No." + 1;
+
+      EFTTransactionResponse.INIT;
+      EFTTransactionResponse."Entry No." := NextEntryNo;
+      EFTTransactionResponse."Pos Entry Receipt No." := NewLine."Receipt No.";
+      EFTTransactionResponse."Pos Entry Line No" := NewLine."Line No.";
+      EFTTransactionResponse."Store No." := NewLine."Store No.";
+      EFTTransactionResponse."Pos Terminal No" := NewLine."POS Terminal No.";
+      EFTTransactionResponse."Pos Entry Original Date" := POSTrans."Original Date";
+      EFTTransactionResponse."Entry Type" := EFTTransactionResponseType;
+      EFTTransactionResponse.Amount := PaymentAmount;
+      EFTTransactionResponse."Expiry Date" := EFTCardExpDate;
+      EFTTransactionResponse."Tender Type" := TenderType.Code;
+      EFTTransactionResponse."Sale Is Return Sale" := POSTrans."Sale Is Return Sale";
+      EFTTransactionResponse.Status := EFTTransactionResponse.Status::New;
+      EFTTransactionResponse.Type := JSonMgt.GetJsonValue(TempDataExchField,'type');
+      EFTTransactionResponse."GP Status" := JSonMgt.GetJsonValue(TempDataExchField,'status');
+      EFTTransactionResponse."GP Transaction Id" := JSonMgt.GetJsonValue(TempDataExchField,'id');
+      EFTTransactionResponse.Channel := JSonMgt.GetJsonValue(TempDataExchField,'channel');
+      EFTTransactionResponse."Capture Mode" := JSonMgt.GetJsonValue(TempDataExchField,'capture_mode');
+      EFTTransactionResponse.Currency := JSonMgt.GetJsonValue(TempDataExchField,'currency');
+      EFTTransactionResponse.Country := JSonMgt.GetJsonValue(TempDataExchField,'country');
+      EFTTransactionResponse."Merchant Id" := JSonMgt.GetJsonValue(TempDataExchField,'merchant_id');
+      EFTTransactionResponse."Merchant Name" := JSonMgt.GetJsonValue(TempDataExchField,'merchant_name');
+      EFTTransactionResponse.Reference := JSonMgt.GetJsonValue(TempDataExchField,'reference');
+      EFTTransactionResponse."Account Id" := JSonMgt.GetJsonValue(TempDataExchField,'account_id');
+      EFTTransactionResponse."Account Name" := JSonMgt.GetJsonValue(TempDataExchField,'account_name');
+      EFTTransactionResponse."Payment Method Result" := JSonMgt.GetJsonValue(TempDataExchField,'payment_method.result');
+      EFTTransactionResponse."Paymentod Method Message" := JSonMgt.GetJsonValue(TempDataExchField,'payment_method.message');
+      EFTTransactionResponse."Pay. Meth. Entry Mode" := JSonMgt.GetJsonValue(TempDataExchField,'payment_method.entry_mode');
+      EFTTransactionResponse."Card Brand" := JSonMgt.GetJsonValue(TempDataExchField,'payment_method.card.brand');
+      EFTTransactionResponse."Card No." := JSonMgt.GetJsonValue(TempDataExchField,'payment_method.card.masked_number_last4');
+      EFTTransactionResponse."Auth. Code" := JSonMgt.GetJsonValue(TempDataExchField,'payment_method.card.authcode');
+      EFTTransactionResponse."Brand Reference" := JSonMgt.GetJsonValue(TempDataExchField,'payment_method.card.brand_reference');
+      EFTTransactionResponse."Result Code" := JSonMgt.GetJsonValue(TempDataExchField,'action.result_code');
+      EFTTransactionResponse."App Id" := JSonMgt.GetJsonValue(TempDataExchField,'action.app_id');
+      EFTTransactionResponse."App Name" := JSonMgt.GetJsonValue(TempDataExchField,'action.app_name');
+      EFTTransactionResponse."Time Created" := JSonMgt.GetJsonValue(TempDataExchField,'time_created');
+      EFTTransactionResponse."Action Type" := JSonMgt.GetJsonValue(TempDataExchField,'action.type');
+      EFTTransactionResponse."Action Id" := JSonMgt.GetJsonValue(TempDataExchField,'action.id');
+      EFTTransactionResponse."Batch Id" := JSonMgt.GetJsonValue(TempDataExchField,'batch_id');
+
+      EFTTransactionResponse.INSERT;
+
+      MarkEFTTransactionResponseReversal(EFTTransactionResponse,EFTTransactionResponseRefunded);
+      MarkEFTTransactionResponseReturnSale(EFTTransactionResponse,POSTrans,EFTTransactionResponseRefunded);
+
+      IF NOT (EFTTransactionResponseType = EFTTransactionResponseType::Reversal) THEN
+        CommitPaymentLine(EFTTransactionResponse);
+    END;
+
+    LOCAL PROCEDURE MarkEFTTransactionResponseReturnSale@1000000003(VAR EFTTransactionResponse@1000000000 : Record 50004;POSTransaction@1000000001 : Record 99008980;EFTTransactionResponseRefunded@1000000002 : Record 50004);
+    BEGIN
+      IF NOT POSTransaction."Sale Is Return Sale" THEN
+        EXIT;
+
+      EFTTransactionResponse."Sale Is Return Sale" := POSTransaction."Sale Is Return Sale";
+      CopyEFTTransactionResponseFieldsFromOriginalLine(EFTTransactionResponse,EFTTransactionResponseRefunded);
+
+      EFTTransactionResponse.MODIFY;
+    END;
+
+    LOCAL PROCEDURE MarkEFTTransactionResponseReversal@1000000009(VAR EFTTransactionResponse@1000000000 : Record 50004;EFTTransactionResponseRefunded@1000000002 : Record 50004);
+    BEGIN
+      IF NOT (EFTTransactionResponse."Entry Type" = EFTTransactionResponse."Entry Type"::Reversal) THEN
+        EXIT;
+
+      CopyEFTTransactionResponseFieldsFromOriginalLine(EFTTransactionResponse,EFTTransactionResponseRefunded);
+      EFTTransactionResponse.Status := EFTTransactionResponse.Status::Voided;
+
+      EFTTransactionResponse.MODIFY;
+    END;
+
+    LOCAL PROCEDURE CommitPaymentLine@1000000002(EFTTransactionResponse@1000000000 : Record 50004);
+    VAR
+      PosTransCU@1000000001 : Codeunit 99001570;
+      EFTPOSPostUtility@1000000002 : Codeunit 50022;
+    BEGIN
+      IF EFTTransactionResponse."Payment Method Result" = '00' THEN
+        PosTransCU.TransactionTendered;
+    END;
+
+    PROCEDURE OnBeforeVoidPaymentLine@1000000039(VAR POSTransaction@1000000000 : Record 99008980;VAR POSTransLine@1000000001 : Record 99008981) : Boolean;
+    BEGIN
+      // CU Pos Transaction: function VoidLinePressed()
+      EXIT(VoidEFTResponseLine(POSTransaction,POSTransLine));
+    END;
+
+    PROCEDURE OnBeforeVoidTransaction@1000000034(VAR POSTransaction@1000000000 : Record 99008980) : Boolean;
+    VAR
+      PosTransLine@1000000001 : Record 99008981;
+      EFTPaymentLineNo@1000000003 : Integer;
+      LinesVoidedWithSuccess@1000000002 : Boolean;
+    BEGIN
+      // CU Pos Transaction: function VoidTransaction()
+      PosTransLine.SETRANGE("Receipt No.",POSTransaction."Receipt No.");
+      PosTransLine.SETRANGE("Store No.",POSTransaction."Store No.");
+      PosTransLine.SETRANGE("POS Terminal No.",POSTransaction."POS Terminal No.");
+      PosTransLine.SETRANGE("Entry Type", PosTransLine."Entry Type"::Payment);
+      PosTransLine.SETRANGE("Entry Status",PosTransLine."Entry Status"::" ");
+      IF NOT PosTransLine.FINDSET THEN
+        EXIT(TRUE);
+
+      REPEAT
+        LinesVoidedWithSuccess := VoidEFTResponseLine(POSTransaction,PosTransLine);
+      UNTIL (PosTransLine.NEXT = 0) OR (NOT LinesVoidedWithSuccess);
+
+      EXIT(LinesVoidedWithSuccess);
+    END;
+
+    PROCEDURE VoidEFTResponseLine@1000000065(POSTransaction@1000000002 : Record 99008980;POSTransLine@1000000000 : Record 99008981) : Boolean;
+    VAR
+      EFTTransactionResponse@1000000001 : Record 50004;
+      JsonString@1000000003 : Text;
+      TempDataExchField@1000000004 : TEMPORARY Record 1221;
+      GlobalPayAPIMgmt@1000000006 : Codeunit 50020;
+      JsonMgt@1000000005 : Codeunit 50021;
+      PosCtrl@1000000007 : Codeunit 10012720;
+      InitialTransactionJson@1000000008 : Text;
+      TransactionStatus@1000000009 : Text;
+      TempDataExchField2@1000000010 : TEMPORARY Record 1221;
+    BEGIN
+      //for in progress lines, not posted !
+      CheckGlobalPayAPISetup;
+      GetCreateTransGlobalPayApiSetupLine;
+
+      EFTTransactionResponse.SETRANGE("Pos Entry Receipt No.",POSTransLine."Receipt No.");
+      EFTTransactionResponse.SETRANGE("Store No.",POSTransLine."Store No.");
+      EFTTransactionResponse.SETRANGE("Pos Terminal No",POSTransLine."POS Terminal No.");
+      EFTTransactionResponse.SETRANGE("Pos Entry Line No",POSTransLine."Line No.");
+      EFTTransactionResponse.SETRANGE(Status,EFTTransactionResponse.Status::New);
+      EFTTransactionResponse.SETRANGE("Entry Type",EFTTransactionResponse."Entry Type"::Payment);
+      EFTTransactionResponse.SETRANGE("Pos Entry Original Date",POSTransaction."Original Date");
+      IF NOT EFTTransactionResponse.FINDFIRST THEN
+        EXIT(TRUE);
+
+      IF NOT PosCtrl.PosConfirm(ConfirmCardNoVoidTxt + '\' + EFTTransactionResponse."Card No.", FALSE) THEN
+        EXIT(FALSE);
+
+      POSGUI.ScreenDisplay('Seeking Authorization..');
+
+      // request refund or reverse based on the Status of Initial Transaction
+      IF GlobalPayAPISetup."Sandbox Environment" THEN
+        InitialTransactionJson := MockGetJsonStringForExistingTransaction
+      ELSE
+        InitialTransactionJson := GlobalPayAPIMgmt.GetTransaction(CreateTransGlobalPayAPISetupLine,EFTTransactionResponse);
+
+      JsonMgt.ReadJSon(InitialTransactionJson,TempDataExchField2);
+      TransactionStatus := JsonMgt.GetJsonValue(TempDataExchField2,'transactions.order_by.status');
+      IF TransactionStatus IN ['CAPTURED', 'FUNDED'] THEN
+        JsonString := GlobalPayAPIRequestRefund(EFTTransactionResponse,EFTTransactionResponse.Amount)
+      ELSE
+        JsonString := GlobalPayAPIRequestReverse(EFTTransactionResponse,EFTTransactionResponse.Amount);
+
+      POSGUI.ScreenDisplay('');
+
+      JsonMgt.ReadJSon(JsonString,TempDataExchField);
+      EXIT(ProcessAPIResponseVoidLine(TempDataExchField,EFTTransactionResponse,POSTransaction));
+    END;
+
+    LOCAL PROCEDURE GPAskForCard@1000000004();
+    VAR
+      InputCardNoTxt@1000000000 : TextConst 'ENU=Input Card No.';
+      InputCardNoText30@1000000001 : Text[30];
+    BEGIN
+      PosTransUtil.SetFunctionMode('GP_CARD');
+      InputCardNoText30 := InputCardNoTxt;
+      PosTransUtil.SetInputPrompt(InputCardNoText30);
+      CardOffLine := FALSE;
+      PosTransUtil.MessageBeep('');
+    END;
+
+    LOCAL PROCEDURE GPAskForSwipeCard@1000000000();
+    VAR
+      SwipeCardTxt@1000000000 : TextConst 'ENU=Swipe Card';
+      SwipeCardText30@1000000001 : Text[30];
+      lResult@1000000002 : Action;
+    BEGIN
+      //PosTransUtil.SetFunctionMode('GP_SWIPE_C');
+      //SwipeCardText30 := SwipeCardTxt;
+      //PosTransUtil.SetInputPrompt(SwipeCardText30);
+      //CardOffLine := FALSE;
+      // PosTransUtil.MessageBeep('');
+
+      IF CurrInput = '' THEN BEGIN
+        CurrInput := POSGUI.OpenAlphabeticKeyboardExm('Swipe Card','',lResult,TRUE,200);
+      END;
+
+      IF CurrInput <> '' THEN BEGIN
+        EFTCardTrack := CurrInput;
+        NextCardPhase;
+      END;
+    END;
+
+    PROCEDURE ValidateCard@32(pCurrInput@1000000000 : Text);
+    VAR
+      Sign@1000 : Decimal;
+    BEGIN
+      CurrInput := pCurrInput;
+
+      IF CurrInput = '' THEN BEGIN
+        PosTransUtil.OpenNumericKeyboard(Text234,0,'','',2);
+        EXIT;
+      END;
+
+      IF CurrInput = '' THEN BEGIN
+        ErrorBeep(Text109);
+        EXIT;
+      END;
+
+      IF POSTrans."Sale Is Return Sale" THEN
+        Sign := -1
+      ELSE
+        Sign := 1;
+
+      IF PaymentAmount * Sign < 0 THEN BEGIN
+        //EFTUtil.SetTransType(CardEntry."Transaction Type"::Refund);
+        CardOffLine := FALSE;
+      END;
+
+      EFTCardNumber := CurrInput;
+      CardPhase := 0;
+
+      PosTransUtil.SetFunctionMode('GP_EXDATE');
+      PosTransUtil.MessageBeep('');
+    END;
+
+    PROCEDURE ValidateDate@54(pCurrInput@1000000000 : Text);
+    VAR
+      Int@1000 : Integer;
+    BEGIN
+      CurrInput := pCurrInput;
+
+      IF CurrInput = '' THEN BEGIN
+        PosTransUtil.OpenNumericKeyboard(Text237,0,'','',8);
+        EXIT;
+      END;
+
+      IF (STRLEN(CurrInput) <> 4) OR NOT EVALUATE(Int,CurrInput) THEN BEGIN
+        ErrorBeep(Text120);
+        EXIT;
+      END;
+
+      IF NOT CheckEFTExpirationDate(CurrInput,POSTrans."Trans. Date") THEN
+        EXIT;
+
+      EFTCardExpDate := CurrInput;
+
+      NextCardPhase;
+    END;
+
+    PROCEDURE ValidateCVV@1000000015(pCurrInput@1000000000 : Text);
+    BEGIN
+      CurrInput := pCurrInput;
+
+      IF CurrInput = '' THEN BEGIN
+        CurrInput := PosTransUtil.OpenNumericKeyboard(EnterCVVText,0,'','',53);
+        EXIT;
+      END;
+
+      IF CurrInput = '' THEN BEGIN
+        ErrorBeep(EFTText033);
+        EXIT;
+      END;
+
+      IF NOT EVALUATE(EFTCVV, CurrInput) THEN BEGIN
+        ErrorBeep(EFTText028);
+        EXIT;
+      END;
+
+      NextCardPhase;
+    END;
+
+    PROCEDURE ValidateCardTrack@1000000024(pCurrInput@1000000000 : Text);
+    VAR
+      Sign@1000 : Decimal;
+    BEGIN
+      CurrInput := pCurrInput;
+
+      IF CurrInput = '' THEN BEGIN
+        PosTransUtil.OpenNumericKeyboard(ShipeCardTxt,0,'','',2);
+        EXIT;
+      END;
+
+      IF CurrInput = '' THEN BEGIN
+        ErrorBeep(ShipeCardTxt);
+        EXIT;
+      END;
+
+      IF POSTrans."Sale Is Return Sale" THEN
+        Sign := -1
+      ELSE
+        Sign := 1;
+
+      IF PaymentAmount * Sign < 0 THEN BEGIN
+        //EFTUtil.SetTransType(CardEntry."Transaction Type"::Refund);
+        CardOffLine := FALSE;
+      END;
+
+      EFTCardTrack := CurrInput;
+
+      NextCardPhase;
+    END;
+
+    LOCAL PROCEDURE NextCardPhase@1000000010();
+    BEGIN
+      // IF CardPhase = 0 THEN BEGIN
+      //  CardPhase += 1;
+      //  PosTransUtil.SetFunctionMode('GP_CVV');
+      //  PosTransUtil.MessageBeep('');
+      //  EXIT;
+      // END;
+
+      SeekAuthorization;
+    END;
+
+    PROCEDURE SeekAuthorization@1000000011();
+    VAR
+      TempDataExchField@1000000000 : TEMPORARY Record 1221;
+      JsonAPIResponseString@1000000002 : Text;
+      JsonMgt@1000000003 : Codeunit 50021;
+      EFTTransactionResponseToRefund@1000000001 : Record 50004;
+      AmountRemainedToRefund@1000000004 : Decimal;
+      AmountToRefund@1000000005 : Decimal;
+      DummyEFTTransactionResponse@1000000006 : Record 50004;
+      InitialTransactionJson@1000000007 : Text;
+      GlobalPayAPIMgmt@1000000008 : Codeunit 50020;
+      TransactionStatus@1000000009 : Text;
+      TempDataExchField2@1000000010 : TEMPORARY Record 1221;
+      RetryWithManualInput@1000000012 : Boolean;
+    BEGIN
+      CurrInput := '';
+
+      POSGUI.ScreenDisplay('Seeking Authorization..');
+
+      SLEEP(100);
+
+      InitNewLine;
+
+      IF NOT POSTrans."Sale Is Return Sale" THEN BEGIN
+        JsonAPIResponseString := GlobalPayAPIRequestSale;
+        IF JsonAPIResponseString <> '' THEN BEGIN
+          JsonMgt.ReadJSon(JsonAPIResponseString,TempDataExchField);
+          ProcessCreateTransAPIResponse(TempDataExchField,PaymentAmount,TenderType,DummyEFTTransactionResponse,RetryWithManualInput);
+        END;
+      END ELSE BEGIN
+          AmountRemainedToRefund := PaymentAmount;
+          EFTTransactionResponseToRefund.SETRANGE("Pos Entry Receipt No.",POSTrans."Retrieved from Receipt No.");
+          EFTTransactionResponseToRefund.SETRANGE("Store No.",POSTrans."Retrieved from Store No.");
+          EFTTransactionResponseToRefund.SETRANGE("Pos Terminal No",POSTrans."Retrieved from POS Term. No.");
+          EFTTransactionResponseToRefund.SETRANGE("Transaction No",POSTrans."Retrieved from Trans. No.");
+          EFTTransactionResponseToRefund.SETRANGE(Status,EFTTransactionResponseToRefund.Status::Posted);
+          IF EFTTransactionResponseToRefund.FINDSET THEN
+            REPEAT
+              IF (EFTTransactionResponseToRefund.Amount - EFTTransactionResponseToRefund."Amount Refunded" - EFTTransactionResponseToRefund."Amount Reversed") > 0 THEN BEGIN
+
+                IF AmountRemainedToRefund <= (EFTTransactionResponseToRefund.Amount - EFTTransactionResponseToRefund."Amount Refunded" - EFTTransactionResponseToRefund."Amount Reversed") THEN
+                  AmountToRefund := AmountRemainedToRefund
+                ELSE
+                  AmountToRefund := EFTTransactionResponseToRefund.Amount - EFTTransactionResponseToRefund."Amount Refunded" - EFTTransactionResponseToRefund."Amount Reversed";
+
+                // request refund or reverse based on the Status of Initial Transaction
+                IF GlobalPayAPISetup."Sandbox Environment" THEN
+                  InitialTransactionJson := MockGetJsonStringForExistingTransaction
+                ELSE
+                  InitialTransactionJson := GlobalPayAPIMgmt.GetTransaction(CreateTransGlobalPayAPISetupLine,EFTTransactionResponseToRefund);
+
+                JsonMgt.ReadJSon(InitialTransactionJson,TempDataExchField2);
+                TransactionStatus := JsonMgt.GetJsonValue(TempDataExchField2,'transactions.order_by.status');
+                IF TransactionStatus IN ['CAPTURED', 'FUNDED'] THEN
+                  JsonAPIResponseString := GlobalPayAPIRequestRefund(EFTTransactionResponseToRefund,AmountToRefund)
+                ELSE
+                  JsonAPIResponseString := GlobalPayAPIRequestReverse(EFTTransactionResponseToRefund,AmountToRefund);
+
+                IF JsonAPIResponseString <> '' THEN BEGIN
+                  JsonMgt.ReadJSon(JsonAPIResponseString,TempDataExchField);
+                  ProcessCreateTransAPIResponse(TempDataExchField,AmountToRefund,TenderType,EFTTransactionResponseToRefund,RetryWithManualInput);
+                  AmountRemainedToRefund -= AmountToRefund;
+                END;
+
+              END;
+            UNTIL (EFTTransactionResponseToRefund.NEXT = 0) OR (AmountRemainedToRefund = 0);
+      END;
+
+      ClearGlobs;
+      IF NOT RetryWithManualInput THEN BEGIN
+        POSGUI.ScreenDisplay('');
+        PosTransUtil.SetFunctionMode('ITEM');
+      END ELSE
+        GPAskForCard;
+    END;
+
+    LOCAL PROCEDURE CheckEFTExpirationDate@1000000008(pExpDate@1000000002 : Text;TransDate@1000000004 : Date) : Boolean;
+    VAR
+      Month@1000000000 : Integer;
+      Year@1000000001 : Integer;
+      LastDateInMonth@1000000003 : Date;
+    BEGIN
+      EVALUATE(Month,COPYSTR(pExpDate,1,2));
+      EVALUATE(Year,'20' + COPYSTR(pExpDate,3,2));
+
+      IF NOT (Month IN [1..12]) THEN BEGIN
+        ErrorBeep(ExpMonthErr);
+        EXIT(FALSE);
+      END;
+
+      LastDateInMonth := DMY2DATE(1,Month,Year);
+      LastDateInMonth := CALCDATE('CM',LastDateInMonth);
+      IF TransDate > LastDateInMonth THEN BEGIN
+        ErrorBeep(CardExpiredErr);
+        EXIT(FALSE);
+      END;
+
+      EXIT(TRUE);
+    END;
+
+    LOCAL PROCEDURE GlobalPayAPIRequestSale@1000000006() : Text;
+    VAR
+      POSTransLines@1000000000 : Codeunit 99001571;
+      JsonResponseTxt@1000000001 : Text;
+    BEGIN
+      GlobalPayAPIMgmt.SetPaymentAmount(PaymentAmount);
+      GlobalPayAPIMgmt.SetCurrency('USD');
+
+      IF GlobalPayAPISetup."Use MSR Card Reader" AND (EFTCardTrack <> '') THEN
+        GlobalPayAPIMgmt.SetCardTrack(EFTCardTrack)
+      ELSE BEGIN
+        GlobalPayAPIMgmt.SetCardNo(EFTCardNumber);
+        GlobalPayAPIMgmt.SetExpiryMonth(COPYSTR(EFTCardExpDate,1,2));
+        GlobalPayAPIMgmt.SetExpiryYear(COPYSTR(EFTCardExpDate,3,2));
+        GlobalPayAPIMgmt.SetCardTrack('');
+      END;
+      GlobalPayAPIMgmt.SetReference(POSTrans."Receipt No." + '_' + FORMAT(GetNextPosTransLineNo(POSTrans."Receipt No.")));
+      EXIT(GlobalPayAPIMgmt.CreateTransaction(CreateTransGlobalPayAPISetupLine));
+    END;
+
+    LOCAL PROCEDURE GlobalPayAPIRequestRefund@1000000012(VAR EFTTransactionResponseToRefund@1000000002 : Record 50004;AmountToRefund@1000000003 : Decimal) : Text;
+    VAR
+      POSTransLines@1000000000 : Codeunit 99001571;
+      JsonResponseTxt@1000000001 : Text;
+    BEGIN
+      GlobalPayAPIMgmt.SetPaymentAmount(AmountToRefund);
+      GlobalPayAPIMgmt.SetCurrency('USD');
+      GlobalPayAPIMgmt.SetReference(POSTrans."Receipt No." + '_' + FORMAT(GetNextPosTransLineNo(POSTrans."Receipt No.")));
+      EXIT(GlobalPayAPIMgmt.RefundTransaction(CreateTransGlobalPayAPISetupLine,EFTTransactionResponseToRefund));
+    END;
+
+    LOCAL PROCEDURE GlobalPayAPIRequestReverse@1000000014(VAR EFTTransactionResponseToRefund@1000000002 : Record 50004;AmountToRefund@1000000003 : Decimal) : Text;
+    VAR
+      POSTransLines@1000000000 : Codeunit 99001571;
+      JsonResponseTxt@1000000001 : Text;
+    BEGIN
+      GlobalPayAPIMgmt.SetPaymentAmount(AmountToRefund);
+      GlobalPayAPIMgmt.SetCurrency('USD');
+      GlobalPayAPIMgmt.SetReference(POSTrans."Receipt No." + '_' + FORMAT(GetNextPosTransLineNo(POSTrans."Receipt No.")));
+      EXIT(GlobalPayAPIMgmt.ReverseTransaction(CreateTransGlobalPayAPISetupLine,EFTTransactionResponseToRefund));
+    END;
+
+    LOCAL PROCEDURE CheckGlobalPayAPISetup@1000000005();
+    BEGIN
+      IF GlobalPayAPISetupChecked THEN
+        EXIT;
+
+      PosTerminal.GET(POSSESSION.TerminalNo);
+      GlobalPayAPISetup.GET(PosTerminal."No.");
+      GlobalPayAPISetup.TESTFIELD("API Active");
+      GlobalPayAPISetup.TESTFIELD("Access Token API URL");
+      GlobalPayAPISetup.TESTFIELD("Create Trans. API URL");
+      GlobalPayAPISetup.TESTFIELD("X-GP-Version");
+
+      GlobalPayAPISetupChecked := TRUE;
+    END;
+
+    LOCAL PROCEDURE ProcessCreateTransAPIResponse@1000000013(VAR TempDataExchField@1000000002 : TEMPORARY Record 1221;PaymentAmount@1000000001 : Decimal;TenderType@1000000000 : Record 99001462;EFTTransactionResponseRefunded@1000000010 : Record 50004;VAR RetryWithManualInput@1000000012 : Boolean) : Boolean;
+    VAR
+      EFTTransactionResponseType@1000000003 : ' ,Payment,Reversal';
+      JsonMgt@1000000004 : Codeunit 50021;
+      Status@1000000007 : Text;
+      ResultCode@1000000005 : Text;
+      ErrorCode@1000000006 : Text;
+      PaymentMethodMessage@1000000008 : Text;
+      ErrString@1000000009 : Text;
+      CardBrandTxt@1000000011 : Text;
+    BEGIN
+      //first check if error code is present. If Yes, stop payment and show error
+      ErrorCode := JsonMgt.GetJsonValue(TempDataExchField,'error_code');
+      IF ErrorCode = '' THEN
+        JsonMgt.GetJsonValue(TempDataExchField,'errorcode');
+
+      IF ErrorCode <> '' THEN BEGIN
+        IF (EFTCardTrack <> '') AND (ErrorCode = 'INVALID_REQUEST_DATA') AND (STRPOS(LOWERCASE(JsonMgt.GetJsonValue(TempDataExchField,'detailed_error_description')),'bad track data') > 0)
+         AND (EFTTransactionResponseRefunded."Entry No." = 0) THEN BEGIN //only for sale transaction!
+          IF POSGUI.PosConfirm(BadTrackDataRetryManualConfirm,TRUE) THEN
+            RetryWithManualInput := TRUE;
+          EXIT(FALSE);
+        END ELSE BEGIN
+          ErrString := STRSUBSTNO(ProcessPaymentErr,ErrorCode,JsonMgt.GetJsonValue(TempDataExchField,'detailed_error_code'),JsonMgt.GetJsonValue(TempDataExchField,'detailed_error_description'));
+          ErrorBeep(COPYSTR(ErrString,1,250));
+          PosTransUtil.SetPOSState('PAYMENT');
+          PosTransUtil.SetFunctionMode('PAYMENT');
+          PosTransUtil.MessageBeep('');
+          EXIT(FALSE);
+        END;
+      END;
+
+      Status := JsonMgt.GetJsonValue(TempDataExchField,'status');
+      ResultCode := JsonMgt.GetJsonValue(TempDataExchField,'action.result_code');
+      PaymentMethodMessage := JsonMgt.GetJsonValue(TempDataExchField,'payment_method.message');
+
+      IF (ResultCode <> 'SUCCESS') OR (PaymentMethodMessage <> 'APPROVAL') THEN BEGIN
+        ErrorBeep(STRSUBSTNO(ProcessPaymentErr2,Status,ResultCode,PaymentMethodMessage));
+        PosTransUtil.SetFunctionMode('PAYMENT');
+        EXIT(FALSE);
+      END;
+
+      IF POSTrans."Sale Is Return Sale" THEN
+        CardBrandTxt := EFTTransactionResponseRefunded."Card Brand"
+      ELSE
+        CardBrandTxt := JsonMgt.GetJsonValue(TempDataExchField,'payment_method.card.brand');
+
+      InsertPaymentLine(PaymentAmount,TenderType,FindTenderTypeCardSetupCardNo(TenderType,CardBrandTxt));
+
+      InsertEFTTransactionResponse(TempDataExchField,PaymentAmount,EFTTransactionResponseType::Payment,POSTrans,EFTTransactionResponseRefunded);
+
+      EXIT(TRUE);
+    END;
+
+    LOCAL PROCEDURE LogAPIError@1000000027(ErrorMessage@1000000000 : Text;RequestText@1000000001 : Text);
+    VAR
+      GlobalPayAPILog@1000000002 : Record 50003;
+      OutStream1@1000000003 : OutStream;
+    BEGIN
+      GlobalPayAPILog.INIT;
+      GlobalPayAPILog.EndPoint := ErrorMessage;
+      GlobalPayAPILog."Date and Time" := CURRENTDATETIME;
+      GlobalPayAPILog.Type := GlobalPayAPILog.Type::Error;
+      GlobalPayAPILog.INSERT;
+      GlobalPayAPILog.Request.CREATEOUTSTREAM(OutStream1);
+      OutStream1.WRITETEXT(RequestText);
+      GlobalPayAPILog.MODIFY;
+    END;
+
+    LOCAL PROCEDURE GetNextPosTransLineNo@1000000019(ReceiptNo@1000000000 : Code[20]) NextLineNo : Integer;
+    VAR
+      POSTransLine@1000000001 : Record 99008981;
+    BEGIN
+      POSTransLine.SETRANGE("Receipt No.",ReceiptNo);
+      POSTransLine.SETFILTER("Entry Type",'%1..%2|%3..',POSTransLine."Entry Type"::Item,POSTransLine."Entry Type"::Payment,POSTransLine."Entry Type"::IncomeExpense);
+      IF NOT POSTransLine.FINDLAST THEN
+        NextLineNo := 10000
+      ELSE
+        NextLineNo := POSTransLine."Line No." + 10000;
+    END;
+
+    LOCAL PROCEDURE ProcessAPIResponseVoidLine@1000000020(VAR TempDataExchField@1000000000 : TEMPORARY Record 1221;VAR EFTTransactionResponse@1000000003 : Record 50004;POSTransaction@1000000006 : Record 99008980) : Boolean;
+    VAR
+      ReturnCode@1000000002 : Code[50];
+      EFTTransactionResponseType@1000000005 : ' ,Payment,Reversal';
+      ResultCode@1000000010 : Text;
+      ErrorCode@1000000009 : Text;
+      PaymentMethodMessage@1000000007 : Text;
+      ErrString@1000000004 : Text;
+      JsonMgt@1000000001 : Codeunit 50021;
+    BEGIN
+      //first check if error code is present. If Yes, stop payment and show error
+      ErrorCode := JsonMgt.GetJsonValue(TempDataExchField,'error_code');
+      IF ErrorCode = '' THEN
+        JsonMgt.GetJsonValue(TempDataExchField,'errorcode');
+
+      IF ErrorCode <> '' THEN BEGIN
+        ErrString := STRSUBSTNO(ProcessReverseErr,ErrorCode,JsonMgt.GetJsonValue(TempDataExchField,'detailed_error_code'),JsonMgt.GetJsonValue(TempDataExchField,'detailed_error_description'));
+        ErrorBeep(COPYSTR(ErrString,1,250));
+        PosTransUtil.SetPOSState('PAYMENT');
+        PosTransUtil.SetFunctionMode('PAYMENT');
+        PosTransUtil.MessageBeep('');
+        EXIT(FALSE);
+      END;
+
+      ResultCode := JsonMgt.GetJsonValue(TempDataExchField,'action.result_code');
+      PaymentMethodMessage := JsonMgt.GetJsonValue(TempDataExchField,'payment_method.message');
+
+      IF (ResultCode <> 'SUCCESS') OR (PaymentMethodMessage <> 'APPROVAL') THEN BEGIN
+        ErrorBeep(STRSUBSTNO(ProcessReverseErr2,ResultCode,PaymentMethodMessage));
+        PosTransUtil.SetFunctionMode('PAYMENT');
+        EXIT(FALSE);
+      END;
+
+      //modify Status of EFT Transaction Response Payment  --> from New/Posted to Voided.
+      EFTTransactionResponse.Status := EFTTransactionResponse.Status::Voided;
+      EFTTransactionResponse.MODIFY;
+      //insert new line in EFT Transaction respose for the reversal
+      InsertEFTTransactionResponse(TempDataExchField,EFTTransactionResponse.Amount,EFTTransactionResponseType::Reversal,POSTransaction,EFTTransactionResponse);
+      EXIT(TRUE);
+    END;
+
+    LOCAL PROCEDURE GetCreateTransGlobalPayApiSetupLine@1000000018();
+    BEGIN
+      IF CreateTransGlobalPayAPISetupLineRetrieved THEN
+        EXIT;
+
+      IF NOT GlobalPayAPISetupChecked THEN
+        PosTerminal.GET(POSSESSION.TerminalNo);
+      CreateTransGlobalPayAPISetupLine.GET(PosTerminal."No.",'TRANSACTIONS');
+      CreateTransGlobalPayAPISetupLineRetrieved := TRUE;
+    END;
+
+    LOCAL PROCEDURE CopyEFTTransactionResponseFieldsFromOriginalLine@1000000016(VAR EFTTransactionResponse@1000000000 : Record 50004;OriginalEFTTransactionResponse@1000000001 : Record 50004);
+    BEGIN
+      EFTTransactionResponse."Original Trans. Entry No." := OriginalEFTTransactionResponse."Entry No.";
+      EFTTransactionResponse."Card No." := OriginalEFTTransactionResponse."Card No.";
+      EFTTransactionResponse."Expiry Date" := OriginalEFTTransactionResponse."Expiry Date";
+      EFTTransactionResponse."Card Brand" := OriginalEFTTransactionResponse."Card Brand";
+      EFTTransactionResponse."Pay. Meth. Entry Mode" := OriginalEFTTransactionResponse."Pay. Meth. Entry Mode";
+      EFTTransactionResponse."Brand Reference" := OriginalEFTTransactionResponse."Brand Reference";
+      EFTTransactionResponse."Merchant Id" := OriginalEFTTransactionResponse."Merchant Id";
+      EFTTransactionResponse."Merchant Name" := OriginalEFTTransactionResponse."Merchant Name";
+    END;
+
+    LOCAL PROCEDURE FindTenderTypeCardSetupCardNo@1000000026(TenderType@1000000001 : Record 99001462;EFTResponseCardBrand@1000000003 : Text[30]) FoundCardType : Code[10];
+    VAR
+      TenderTypeCardSetup@1000000002 : Record 99001464;
+      StringToSearch@1000000000 : Text;
+      txtCharsToKeep@1000000004 : Text;
+      ModifiedDescription@1000000005 : Text;
+    BEGIN
+      CASE EFTResponseCardBrand OF
+        'AMEX' : StringToSearch := 'americanexpress';
+        'MASTERCARD' : StringToSearch := 'mastercard';
+        'MC' : StringToSearch := 'mastercard';
+        'DINERS' : StringToSearch := 'diners';
+        'VISA' : StringToSearch :='visa';
+        'DISCOVER' : StringToSearch := 'discover';
+        'DISC' : StringToSearch := 'discover';
+        'JCB' : StringToSearch := 'jcb';
+        ELSE
+          StringToSearch := 'other';
+      END;
+
+      txtCharsToKeep := 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+      TenderTypeCardSetup.SETRANGE("Store No.",TenderType."Store No.");
+      TenderTypeCardSetup.SETRANGE("Tender Type Code",TenderType.Code);
+      IF TenderTypeCardSetup.FIND('-') THEN
+        REPEAT
+          ModifiedDescription := LOWERCASE(DELCHR(UPPERCASE(TenderTypeCardSetup.Description),'=',DELCHR(UPPERCASE(TenderTypeCardSetup.Description),'=',txtCharsToKeep)));
+          IF STRPOS(ModifiedDescription,StringToSearch) > 0 THEN
+            FoundCardType := TenderTypeCardSetup."Card No.";
+        UNTIL (TenderTypeCardSetup.NEXT = 0) OR (FoundCardType <> '');
+    END;
+
+    LOCAL PROCEDURE MockGetJsonStringForExistingTransaction@1000000028() : Text;
+    VAR
+      EFTTransactionResponse33@1000000001 : Record 50004;
+      RandomInt@1000000000 : Integer;
+    BEGIN
+      RANDOMIZE();
+      RandomInt := RANDOM(2);
+      IF RandomInt < 2 THEN BEGIN
+        //Preauthorized
+        EFTTransactionResponse33.INIT;
+        EFTTransactionResponse33."Time Created" :=  '2020-03-02T06:44:05.058Z';
+        EFTTransactionResponse33."Account Name" := 'Transaction_Processing';
+        EFTTransactionResponse33."GP Transaction Id" := 'TRN_weOXUu5qLfNLZOe5XPHWys6tmIQhj4';
+      END ELSE BEGIN
+        //Captured
+        EFTTransactionResponse33.INIT;
+        EFTTransactionResponse33."Time Created" :=  '2020-03-05T09:44:05.086Z';
+        EFTTransactionResponse33."Account Name" := 'Transaction_Processing';
+        EFTTransactionResponse33."GP Transaction Id" := 'TRN_f9c9WcoYbjCQORLKXGnrn0JoRfMkRC';
+      END;
+      EXIT(GlobalPayAPIMgmt.GetTransaction(CreateTransGlobalPayAPISetupLine,EFTTransactionResponse33));
+    END;
+
+    LOCAL PROCEDURE ClearGlobs@1000000017();
+    BEGIN
+      CLEAR(EFTCardNumber);
+      CLEAR(EFTCardExpDate);
+      CLEAR(EFTCardTrack);
+      CLEAR(EFTCVV);
+      CLEAR(CurrInput);
+      CLEAR(CardPhase);
+    END;
+
+    BEGIN
+    END.
+  }
+}
+

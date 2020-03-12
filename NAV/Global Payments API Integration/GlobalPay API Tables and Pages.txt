@@ -1,0 +1,729 @@
+OBJECT Table 50000 GlobalPay API Setup
+{
+  OBJECT-PROPERTIES
+  {
+    Date=03/11/20;
+    Time=11:02:57 AM;
+    Modified=Yes;
+    Version List=TASK_ID_REMOVED;
+  }
+  PROPERTIES
+  {
+  }
+  FIELDS
+  {
+    { 1   ;   ;Pos Terminal No.    ;Code20        ;TableRelation="POS Terminal" }
+    { 2   ;   ;Access Token API URL;Text100        }
+    { 5   ;   ;X-GP-Version        ;Text30        ;CaptionML=ENU=API Version }
+    { 6   ;   ;API Active          ;Boolean        }
+    { 10  ;   ;Create Trans. API URL;Text100       }
+    { 22  ;   ;Save Json File      ;Boolean        }
+    { 23  ;   ;Refund API URL      ;Text100        }
+    { 25  ;   ;Reverse API URL     ;Text100        }
+    { 26  ;   ;Get Transaction API URL;Text150     }
+    { 30  ;   ;Sandbox Environment ;Boolean        }
+    { 40  ;   ;Use MSR Card Reader ;Boolean        }
+    { 50  ;   ;Show Track Data In Request Log;Boolean }
+    { 51  ;   ;Show Card No In Request Log;Boolean;CaptionML=ENU=Show Full Card No In Request Log }
+  }
+  KEYS
+  {
+    {    ;Pos Terminal No.                        ;Clustered=Yes }
+  }
+  FIELDGROUPS
+  {
+  }
+  CODE
+  {
+
+    PROCEDURE InsertIfNotExists@1000000000();
+    BEGIN
+      IF NOT GET THEN BEGIN
+        INIT;
+        INSERT(TRUE);
+      END;
+    END;
+
+    PROCEDURE ReadTokenFromBLOB@1(FieldNo@1000 : Integer) : Text;
+    VAR
+      InStr@1006 : InStream;
+      BinaryReader@1004 : DotNet "'mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.IO.BinaryReader";
+      Encoding@1002 : DotNet "'mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Text.Encoding";
+      FieldRef@1001 : FieldRef;
+      TokenText@1007 : Text;
+      RecRef@1008 : RecordRef;
+      TempBlob@1009 : TEMPORARY Record 99008535;
+    BEGIN
+      RecRef.GETTABLE(Rec);
+      FieldRef := RecRef.FIELD(FieldNo);
+      FieldRef.CALCFIELD;
+      TempBlob.INIT;
+      TempBlob.Blob := FieldRef.VALUE;
+      IF NOT TempBlob.Blob.HASVALUE THEN
+        EXIT('');
+
+      TempBlob.Blob.CREATEINSTREAM(InStr);
+      BinaryReader := BinaryReader.BinaryReader(InStr,Encoding.UTF8);
+      IF NOT ISNULL(BinaryReader) THEN BEGIN   //read value from BLOB field
+        IF BinaryReader.BaseStream.Length > 0 THEN
+          TokenText := BinaryReader.ReadString;
+        BinaryReader.Close;
+      END;
+
+      EXIT(TokenText);
+    END;
+
+    PROCEDURE WriteTokenToBLOB@7(FieldNo@1000 : Integer;NewText@1001 : Text);
+    VAR
+      FieldRef@1005 : FieldRef;
+      RecRef@1004 : RecordRef;
+      TempBlob@1003 : TEMPORARY Record 99008535;
+      BinaryWriter@1002 : DotNet "'mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.IO.BinaryWriter";
+      OutStr@1006 : OutStream;
+      Encoding@1007 : DotNet "'mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Text.Encoding";
+      EmptyTempBlob@1008 : TEMPORARY Record 99008535;
+    BEGIN
+      RecRef.GETTABLE(Rec);
+      FieldRef := RecRef.FIELD(FieldNo);
+      FieldRef.CALCFIELD;
+
+      TempBlob.INIT;
+      FieldRef.VALUE := TempBlob.Blob; //clear token
+
+      IF NewText <> '' THEN BEGIN
+        TempBlob.Blob.CREATEOUTSTREAM(OutStr);
+        BinaryWriter := BinaryWriter.BinaryWriter(OutStr,Encoding.UTF8);
+        BinaryWriter.Write(NewText);
+        BinaryWriter.Close;
+        FieldRef.VALUE := TempBlob.Blob;
+      END;
+
+      RecRef.MODIFY;
+    END;
+
+    BEGIN
+    END.
+  }
+}
+
+OBJECT Table 50001 GlobalPay API Setup Line
+{
+  OBJECT-PROPERTIES
+  {
+    Date=02/18/20;
+    Time=[ 1:41:37 PM];
+    Modified=Yes;
+    Version List=TASK_ID_REMOVED;
+  }
+  PROPERTIES
+  {
+  }
+  FIELDS
+  {
+    { 1   ;   ;Pos Terminal No.    ;Code20        ;TableRelation="POS Terminal" }
+    { 2   ;   ;App Type            ;Code50        ;TableRelation="GlobalPay App Types" }
+    { 3   ;   ;App Id              ;Text150        }
+    { 4   ;   ;App Key             ;Text150        }
+    { 5   ;   ;Token               ;BLOB           }
+    { 6   ;   ;Token Expiration DateTime;DateTime  }
+    { 7   ;   ;Token Creation DateTime;DateTime    }
+    { 8   ;   ;Token Seconds To Expire;Integer     }
+  }
+  KEYS
+  {
+    {    ;Pos Terminal No.,App Type               ;Clustered=Yes }
+  }
+  FIELDGROUPS
+  {
+  }
+  CODE
+  {
+
+    PROCEDURE ReadTextFromBLOB@1(FieldNo@1000 : Integer) : Text;
+    VAR
+      InStr@1006 : InStream;
+      BinaryReader@1004 : DotNet "'mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.IO.BinaryReader";
+      Encoding@1002 : DotNet "'mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Text.Encoding";
+      FieldRef@1001 : FieldRef;
+      TokenText@1007 : Text;
+      RecRef@1008 : RecordRef;
+      TempBlob@1009 : TEMPORARY Record 99008535;
+    BEGIN
+      RecRef.GETTABLE(Rec);
+      FieldRef := RecRef.FIELD(FieldNo);
+      FieldRef.CALCFIELD;
+      TempBlob.INIT;
+      TempBlob.Blob := FieldRef.VALUE;
+      IF NOT TempBlob.Blob.HASVALUE THEN
+        EXIT('');
+
+      TempBlob.Blob.CREATEINSTREAM(InStr);
+      BinaryReader := BinaryReader.BinaryReader(InStr,Encoding.UTF8);
+      IF NOT ISNULL(BinaryReader) THEN BEGIN   //read value from BLOB field
+        IF BinaryReader.BaseStream.Length > 0 THEN
+          TokenText := BinaryReader.ReadString;
+        BinaryReader.Close;
+      END;
+
+      EXIT(TokenText);
+    END;
+
+    PROCEDURE WriteTextToBLOB@7(FieldNo@1000 : Integer;NewText@1001 : Text);
+    VAR
+      FieldRef@1005 : FieldRef;
+      RecRef@1004 : RecordRef;
+      TempBlob@1003 : TEMPORARY Record 99008535;
+      BinaryWriter@1002 : DotNet "'mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.IO.BinaryWriter";
+      OutStr@1006 : OutStream;
+      Encoding@1007 : DotNet "'mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Text.Encoding";
+      EmptyTempBlob@1008 : TEMPORARY Record 99008535;
+    BEGIN
+      RecRef.GETTABLE(Rec);
+      FieldRef := RecRef.FIELD(FieldNo);
+      FieldRef.CALCFIELD;
+
+      TempBlob.INIT;
+      FieldRef.VALUE := TempBlob.Blob; //clear token
+
+      IF NewText <> '' THEN BEGIN
+        TempBlob.Blob.CREATEOUTSTREAM(OutStr);
+        BinaryWriter := BinaryWriter.BinaryWriter(OutStr,Encoding.UTF8);
+        BinaryWriter.Write(NewText);
+        BinaryWriter.Close;
+        FieldRef.VALUE := TempBlob.Blob;
+      END;
+
+      RecRef.MODIFY;
+    END;
+
+    BEGIN
+    END.
+  }
+}
+
+OBJECT Table 50002 GlobalPay App Types
+{
+  OBJECT-PROPERTIES
+  {
+    Date=02/17/20;
+    Time=[ 3:55:29 PM];
+    Modified=Yes;
+    Version List=TASK_ID_REMOVED;
+  }
+  PROPERTIES
+  {
+  }
+  FIELDS
+  {
+    { 1   ;   ;App Type            ;Code50         }
+    { 5   ;   ;Description         ;Text200        }
+  }
+  KEYS
+  {
+    {    ;App Type                                ;Clustered=Yes }
+  }
+  FIELDGROUPS
+  {
+  }
+  CODE
+  {
+
+    BEGIN
+    END.
+  }
+}
+
+OBJECT Table 50003 GlobalPay API Log
+{
+  OBJECT-PROPERTIES
+  {
+    Date=02/19/20;
+    Time=[ 9:46:12 AM];
+    Modified=Yes;
+    Version List=TASK_ID_REMOVED;
+  }
+  PROPERTIES
+  {
+  }
+  FIELDS
+  {
+    { 1   ;   ;Entry No            ;Integer       ;AutoIncrement=Yes }
+    { 2   ;   ;Request             ;BLOB          ;Compressed=No;
+                                                   SubType=Memo }
+    { 6   ;   ;EndPoint            ;Text250       ;CaptionML=ENU=Endpoint / Message }
+    { 7   ;   ;Response            ;BLOB           }
+    { 8   ;   ;HTTP Method         ;Code10         }
+    { 10  ;   ;Date and Time       ;DateTime       }
+    { 20  ;   ;Type                ;Option        ;OptionString=Information,Error }
+  }
+  KEYS
+  {
+    {    ;Entry No                                ;Clustered=Yes }
+  }
+  FIELDGROUPS
+  {
+  }
+  CODE
+  {
+
+    PROCEDURE ReadTextFromBLOB@1(FieldNo@1000 : Integer) : Text;
+    VAR
+      InStr@1006 : InStream;
+      BinaryReader@1004 : DotNet "'mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.IO.BinaryReader";
+      Encoding@1002 : DotNet "'mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089'.System.Text.Encoding";
+      FieldRef@1001 : FieldRef;
+      ReadText@1007 : Text;
+      RecRef@1008 : RecordRef;
+      TempBlob@1009 : TEMPORARY Record 99008535;
+    BEGIN
+      RecRef.GETTABLE(Rec);
+      FieldRef := RecRef.FIELD(FieldNo);
+      FieldRef.CALCFIELD;
+      TempBlob.INIT;
+      TempBlob.Blob := FieldRef.VALUE;
+      IF NOT TempBlob.Blob.HASVALUE THEN
+        EXIT('');
+
+      TempBlob.Blob.CREATEINSTREAM(InStr);
+      InStr.READ(ReadText,MAXSTRLEN(ReadText));
+
+      EXIT(ReadText);
+    END;
+
+    BEGIN
+    END.
+  }
+}
+
+OBJECT Table 50004 EFT Transaction Response
+{
+  OBJECT-PROPERTIES
+  {
+    Date=03/05/20;
+    Time=[ 2:40:46 PM];
+    Modified=Yes;
+    Version List=TASK_ID_REMOVED;
+  }
+  PROPERTIES
+  {
+  }
+  FIELDS
+  {
+    { 1   ;   ;Entry No.           ;Integer        }
+    { 3   ;   ;Pos Entry Receipt No.;Code20        }
+    { 4   ;   ;Pos Entry Line No   ;Integer        }
+    { 5   ;   ;Status              ;Option        ;OptionString=New,Posted,Voided }
+    { 10  ;   ;Transaction No      ;Integer        }
+    { 15  ;   ;Store No.           ;Code10        ;TableRelation=Store }
+    { 20  ;   ;Pos Terminal No     ;Code10        ;TableRelation="POS Terminal" }
+    { 25  ;   ;Pos Entry Original Date;Date        }
+    { 30  ;   ;Entry Type          ;Option        ;OptionString=[ ,Payment,Reversal] }
+    { 35  ;   ;Sale Is Return Sale ;Boolean        }
+    { 40  ;   ;Amount              ;Decimal        }
+    { 45  ;   ;Expiry Date         ;Text10         }
+    { 46  ;   ;Type                ;Code20         }
+    { 47  ;   ;GP Transaction Id   ;Text100        }
+    { 50  ;   ;GP Status           ;Text20         }
+    { 51  ;   ;Channel             ;Text10         }
+    { 52  ;   ;Capture Mode        ;Text20         }
+    { 53  ;   ;Country             ;Code10         }
+    { 54  ;   ;Currency            ;Code10         }
+    { 55  ;   ;Reference           ;Text50         }
+    { 56  ;   ;Payment Method Result;Code10        }
+    { 57  ;   ;Paymentod Method Message;Text30     }
+    { 58  ;   ;Pay. Meth. Entry Mode;Text20        }
+    { 59  ;   ;Card Brand          ;Text30         }
+    { 60  ;   ;Card No.            ;Text50         }
+    { 61  ;   ;Auth. Code          ;Code20         }
+    { 62  ;   ;Brand Reference     ;Text30         }
+    { 63  ;   ;Result Code         ;Text30         }
+    { 64  ;   ;App Id              ;Text100        }
+    { 65  ;   ;App Name            ;Text50         }
+    { 66  ;   ;Time Created        ;Text100        }
+    { 67  ;   ;Action Type         ;Text20         }
+    { 68  ;   ;Action Id           ;Text50         }
+    { 70  ;   ;Merchant Id         ;Text100        }
+    { 71  ;   ;Merchant Name       ;Text50         }
+    { 75  ;   ;Account Id          ;Text100        }
+    { 80  ;   ;Account Name        ;Text50         }
+    { 85  ;   ;Batch Id            ;Text30         }
+    { 90  ;   ;Original Trans. Entry No.;Integer   }
+    { 100 ;   ;Amount Refunded     ;Decimal        }
+    { 101 ;   ;Amount Reversed     ;Decimal        }
+    { 105 ;   ;Tender Type         ;Code10        ;CaptionML=ENU=Tender Type }
+  }
+  KEYS
+  {
+    {    ;Entry No.                               ;Clustered=Yes }
+    {    ;Pos Entry Receipt No.,Pos Entry Line No,Status }
+    {    ;Pos Entry Receipt No.,Store No.,Pos Terminal No,Transaction No,Status }
+  }
+  FIELDGROUPS
+  {
+  }
+  CODE
+  {
+
+    BEGIN
+    END.
+  }
+}
+
+OBJECT Page 50000 GlobalPay API Setup
+{
+  OBJECT-PROPERTIES
+  {
+    Date=03/11/20;
+    Time=11:05:54 AM;
+    Modified=Yes;
+    Version List=TASK_ID_REMOVED;
+  }
+  PROPERTIES
+  {
+    CaptionML=ENU=GlobalPay API Setup;
+    SourceTable=Table50000;
+    ActionList=ACTIONS
+    {
+      { 13      ;    ;ActionContainer;
+                      ActionContainerType=ActionItems }
+      { 7       ;0   ;ActionContainer;
+                      ActionContainerType=RelatedInformation }
+      { 9       ;1   ;Action    ;
+                      Name=ViewAPILog;
+                      CaptionML=ENU=View API Log;
+                      RunObject=Page 50003;
+                      Promoted=Yes;
+                      PromotedIsBig=Yes;
+                      Image=History;
+                      PromotedCategory=Report }
+    }
+  }
+  CONTROLS
+  {
+    { 1   ;0   ;Container ;
+                ContainerType=ContentArea }
+
+    { 2   ;1   ;Group     ;
+                Name=General;
+                CaptionML=ENU=API Settings;
+                GroupType=Group }
+
+    { 1000000000;2;Field  ;
+                SourceExpr="Pos Terminal No." }
+
+    { 4   ;2   ;Field     ;
+                SourceExpr="API Active" }
+
+    { 1000000004;2;Field  ;
+                SourceExpr="X-GP-Version" }
+
+    { 1000000007;2;Field  ;
+                SourceExpr="Sandbox Environment" }
+
+    { 1000000009;2;Field  ;
+                SourceExpr="Use MSR Card Reader" }
+
+    { 1000000010;2;Field  ;
+                SourceExpr="Show Track Data In Request Log" }
+
+    { 1000000011;2;Field  ;
+                SourceExpr="Show Card No In Request Log" }
+
+    { 1000000002;2;Group  ;
+                CaptionML=ENU=API EndPoints;
+                GroupType=Group }
+
+    { 3   ;3   ;Field     ;
+                CaptionML=ENU=Access Token;
+                SourceExpr="Access Token API URL" }
+
+    { 1000000003;3;Field  ;
+                CaptionML=ENU=Create Transactions;
+                SourceExpr="Create Trans. API URL" }
+
+    { 1000000005;3;Field  ;
+                SourceExpr="Refund API URL" }
+
+    { 1000000006;3;Field  ;
+                SourceExpr="Reverse API URL" }
+
+    { 1000000008;3;Field  ;
+                CaptionML=ENU=Get Transaction API URL;
+                SourceExpr="Get Transaction API URL" }
+
+    { 1000000001;1;Part   ;
+                SubPageLink=Pos Terminal No.=FIELD(Pos Terminal No.);
+                PagePartID=Page50002;
+                PartType=Page }
+
+  }
+  CODE
+  {
+    VAR
+      CreateCatalogEnabled@1000 : Boolean;
+      TokenExists@1001 : Boolean;
+      RefreshTokenExists@1002 : Boolean;
+
+    LOCAL PROCEDURE ViewAndUpdateToken@3(FieldNo@1003 : Integer);
+    VAR
+      MyText@1000 : Text;
+      NewText@1001 : Text;
+      InputLongTextTest@1002 : Page 50001;
+    BEGIN
+      MyText := ReadTokenFromBLOB(FieldNo);
+
+      InputLongTextTest.SetText(MyText);
+      IF InputLongTextTest.RUNMODAL = ACTION::OK THEN BEGIN
+        NewText := InputLongTextTest.GetText;
+        IF NewText <> MyText THEN    //write value to BLOB field
+          WriteTokenToBLOB(FieldNo,NewText);
+      END;
+    END;
+
+    BEGIN
+    END.
+  }
+}
+
+OBJECT Page 50001 Input Long Text
+{
+  OBJECT-PROPERTIES
+  {
+    Date=02/17/20;
+    Time=[ 2:50:45 PM];
+    Modified=Yes;
+    Version List=TASK_ID_REMOVED;
+  }
+  PROPERTIES
+  {
+    SourceTable=Table50000;
+    PageType=StandardDialog;
+  }
+  CONTROLS
+  {
+    { 1100476000;0;Container;
+                ContainerType=ContentArea }
+
+    { 1100476001;1;Field  ;
+                SourceExpr=MyText;
+                MultiLine=Yes }
+
+  }
+  CODE
+  {
+    VAR
+      MyText@1100476000 : Text;
+
+    PROCEDURE SetText@1100476000(pMyText@1100476000 : Text);
+    BEGIN
+      MyText := pMyText;
+    END;
+
+    PROCEDURE GetText@1100476003() : Text;
+    BEGIN
+      EXIT(MyText);
+    END;
+
+    BEGIN
+    END.
+  }
+}
+
+OBJECT Page 50002 GlobalPay Setup Lines
+{
+  OBJECT-PROPERTIES
+  {
+    Date=02/18/20;
+    Time=[ 1:42:38 PM];
+    Modified=Yes;
+    Version List=TASK_ID_REMOVED;
+  }
+  PROPERTIES
+  {
+    CaptionML=ENU=Lines;
+    SourceTable=Table50001;
+    PageType=ListPart;
+    OnOpenPage=BEGIN
+                 CALCFIELDS(Token);
+                 TokenExists := Token.HASVALUE;
+               END;
+
+    OnAfterGetRecord=BEGIN
+                       CALCFIELDS(Token);
+                       TokenExists := Token.HASVALUE;
+                     END;
+
+    ActionList=ACTIONS
+    {
+      { 1000000003;  ;ActionContainer;
+                      ActionContainerType=ActionItems }
+      { 1000000004;1 ;Action    ;
+                      Name=ViewUpdateToken;
+                      CaptionML=ENU=View Api Token;
+                      Promoted=Yes;
+                      PromotedIsBig=Yes;
+                      Image=UpdateXML;
+                      PromotedCategory=Process;
+                      PromotedOnly=Yes;
+                      OnAction=BEGIN
+                                 ViewAndUpdateToken(FIELDNO(Token));
+                                 FIND;
+                                 CALCFIELDS(Token);
+                                 TokenExists := Token.HASVALUE;
+                                 CurrPage.UPDATE(FALSE);
+                               END;
+                                }
+    }
+  }
+  CONTROLS
+  {
+    { 1000000000;0;Container;
+                ContainerType=ContentArea }
+
+    { 1000000001;1;Group  ;
+                Name=Group;
+                GroupType=Repeater }
+
+    { 1000000002;2;Field  ;
+                SourceExpr="App Type" }
+
+    { 1000000007;2;Field  ;
+                SourceExpr="App Id" }
+
+    { 1000000008;2;Field  ;
+                ExtendedDatatype=Masked;
+                SourceExpr="App Key" }
+
+    { 1000000005;2;Field  ;
+                CaptionML=ENU=Token Exists;
+                SourceExpr=TokenExists;
+                Enabled=False }
+
+    { 1000000009;2;Field  ;
+                SourceExpr="Token Creation DateTime";
+                Editable=False }
+
+    { 1000000010;2;Field  ;
+                SourceExpr="Token Seconds To Expire";
+                Editable=False }
+
+    { 1000000006;2;Field  ;
+                SourceExpr="Token Expiration DateTime";
+                Editable=False }
+
+  }
+  CODE
+  {
+    VAR
+      TokenExists@1000000001 : Boolean;
+
+    LOCAL PROCEDURE ViewAndUpdateToken@3(FieldNo@1003 : Integer);
+    VAR
+      MyText@1000 : Text;
+      NewText@1001 : Text;
+      InputLongTextTest@1002 : Page 50001;
+    BEGIN
+      MyText := ReadTextFromBLOB(FieldNo);
+
+      InputLongTextTest.SetText(MyText);
+      InputLongTextTest.EDITABLE(FALSE);
+      IF InputLongTextTest.RUNMODAL = ACTION::OK THEN BEGIN
+        NewText := InputLongTextTest.GetText;
+        IF NewText <> MyText THEN    //write value to BLOB field
+          WriteTextToBLOB(FieldNo,NewText);
+      END;
+    END;
+
+    BEGIN
+    END.
+  }
+}
+
+OBJECT Page 50003 GlobalPay API Log
+{
+  OBJECT-PROPERTIES
+  {
+    Date=02/17/20;
+    Time=[ 5:54:41 PM];
+    Modified=Yes;
+    Version List=TASK_ID_REMOVED;
+  }
+  PROPERTIES
+  {
+    InsertAllowed=No;
+    ModifyAllowed=No;
+    SourceTable=Table50003;
+    SourceTableView=SORTING(Entry No)
+                    ORDER(Descending);
+    PageType=List;
+    ActionList=ACTIONS
+    {
+      { 6       ;    ;ActionContainer;
+                      ActionContainerType=ActionItems }
+      { 7       ;1   ;Action    ;
+                      Name=Request;
+                      CaptionML=ENU=View Request;
+                      Promoted=Yes;
+                      PromotedIsBig=Yes;
+                      Image=XMLFile;
+                      PromotedCategory=Process;
+                      PromotedOnly=Yes;
+                      OnAction=VAR
+                                 InputLongText@1000 : Page 50001;
+                               BEGIN
+                                 InputLongText.EDITABLE := FALSE;
+                                 InputLongText.SetText(ReadTextFromBLOB(Rec.FIELDNO(Request)));
+                                 InputLongText.RUNMODAL;
+                               END;
+                                }
+      { 8       ;1   ;Action    ;
+                      Name=Response;
+                      CaptionML=ENU=View Response;
+                      Promoted=Yes;
+                      PromotedIsBig=Yes;
+                      Image=XMLFile;
+                      PromotedCategory=Process;
+                      PromotedOnly=Yes;
+                      OnAction=VAR
+                                 InputLongText@1000 : Page 50001;
+                               BEGIN
+                                 InputLongText.EDITABLE := FALSE;
+                                 InputLongText.SetText(ReadTextFromBLOB(Rec.FIELDNO(Response)));
+                                 InputLongText.RUNMODAL;
+                               END;
+                                }
+    }
+  }
+  CONTROLS
+  {
+    { 1   ;0   ;Container ;
+                ContainerType=ContentArea }
+
+    { 2   ;1   ;Group     ;
+                Name=Group;
+                GroupType=Repeater }
+
+    { 3   ;2   ;Field     ;
+                SourceExpr="Entry No" }
+
+    { 10  ;2   ;Field     ;
+                SourceExpr=Type }
+
+    { 4   ;2   ;Field     ;
+                SourceExpr=EndPoint }
+
+    { 9   ;2   ;Field     ;
+                SourceExpr="HTTP Method" }
+
+    { 5   ;2   ;Field     ;
+                SourceExpr="Date and Time" }
+
+  }
+  CODE
+  {
+
+    BEGIN
+    END.
+  }
+}
+
